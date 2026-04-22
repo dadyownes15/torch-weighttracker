@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "torch-structure-analyser"
+dynamic = ["version"]
+description = "Tools for analyzing and pruning structured sparsity in PyTorch models."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "numpy",
+    "torch",
+]
+
+[project.optional-dependencies]
+dev = [
+    "build",
+    "pytest",
+]
+
+[tool.setuptools.dynamic]
+version = {attr = "torch_structure_analyser.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["torch_structure_analyser*"]
+

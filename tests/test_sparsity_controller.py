@@ -153,6 +153,24 @@ def test_prune_zero_structures_prunes_coupled_zero_units():
     assert report.global_stats.removed == 2
 
 
+def test_count_macs_naive_prunes_on_a_clone_without_mutating_original_model():
+    model = ConvBnNet()
+    with torch.no_grad():
+        model.conv.weight[[0, 2]] = 0
+        model.bn.weight[[0, 2]] = 0
+
+    controller = tsa.SparsityTracker(
+        model,
+        example_inputs=torch.randn(1, 4, 8, 8),
+    )
+
+    macs = controller.count_macs_naive()
+
+    assert macs.total() > 0
+    assert model.conv.out_channels == 4
+    assert model.bn.num_features == 4
+
+
 def test_global_prunable_params_are_deduplicated_across_overlapping_groups():
     model = TinyMLP()
     with torch.no_grad():

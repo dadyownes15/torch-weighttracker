@@ -1,8 +1,11 @@
 from __future__ import annotations
 
-import torch.nn as nn
 from copy import deepcopy
 
+import fvcore.nn
+import torch.nn as nn
+
+from ._helpers import UnwrappedParameters
 from .analysis import (
     AnalyzerConfig,
     PruneZeroResult,
@@ -13,7 +16,6 @@ from .analysis import (
 )
 from .regularizers import CoupledGroupLasso
 from .utils import format_structure_summary
-
 
 class SparsityTracker:
     def __init__(
@@ -162,15 +164,13 @@ class SparsityTracker:
             pruned_group_ids=tuple(pruned_group_ids),
         )
 
-    def count_macs_naive(self):
-        self_copy = deepcopy(self)
-
-        result = self_copy.prune_zero_structures()
-        
-        
-
-
-        
+    def count_macs_naive(self, bias_must_be_zero = True):
+        tracker_copy = self._clone_for_analysis()
+        tracker_copy.prune_zero_structures(include_bias=bias_must_be_zero)
+        return fvcore.nn.FlopCountAnalysis(
+            tracker_copy.model,
+            tracker_copy.config.example_inputs,
+        )
 
     def _update_num_heads_after_head_prune(self, candidate) -> None:
         pruned_heads = len(candidate.zero_prune_units)
@@ -198,3 +198,76 @@ class SparsityTracker:
             verbose=self.config.verbose,
         )
         self.analyzer.config = self.config
+
+    def _clone_for_analysis(self) -> "SparsityTracker":
+        model_copy = deepcopy(self.model)
+        module_map = self._map_named_objects(
+            self.model.named_modules(),
+            model_copy.named_modules(),
+        )
+        parameter_map = self._map_named_objects(
+            self.model.named_parameters(),
+            model_copy.named_parameters(),
+        )
+
+        return SparsityTracker(
+            model_copy,
+            example_inputs=self.config.example_inputs,
+            forward_fn=self.config.forward_fn,
+            output_transform=self.config.output_transform,
+            root_module_types=self.config.root_module_types,
+            ignored_layers=self._remap_sequence(self.config.ignored_layers, module_map, parameter_map),
+            ignored_params=self._remap_sequence(self.config.ignored_params, module_map, parameter_map),
+            customized_pruners=self._remap_mapping(self.config.customized_pruners, module_map, parameter_map),
+            unwrapped_parameters=self._remap_unwrapped_parameters(self.config.unwrapped_parameters, parameter_map),
+            num_heads=self._remap_mapping(self.config.num_heads, module_map, parameter_map),
+            in_channel_groups=self._remap_mapping(self.config.in_channel_groups, module_map, parameter_map),
+            out_channel_groups=self._remap_mapping(self.config.out_channel_groups, module_map, parameter_map),
+            prune_num_heads=self.config.prune_num_heads,
+            prune_head_dims=self.config.prune_head_dims,
+            verbose=self.config.verbose,
+        )
+        
+    @staticmethod
+    def _map_named_objects(source_items, target_items):
+        target_by_name = {name: item for name, item in target_items}
+        return {
+            source_item: target_by_name[name]
+            for name, source_item in source_items
+            if name in target_by_name
+        }
+
+    @classmethod
+    def _remap_sequence(cls, items, module_map, parameter_map):
+        if items is None:
+            return None
+        return type(items)(cls._remap_reference(item, module_map, parameter_map) for item in items)
+
+    @classmethod
+    def _remap_mapping(cls, mapping, module_map, parameter_map):
+        if mapping is None:
+            return None
+        return {
+            cls._remap_reference(key, module_map, parameter_map): value
+            for key, value in mapping.items()
+        }
+
+    @staticmethod
+    def _remap_unwrapped_parameters(unwrapped_parameters, parameter_map):
+        if unwrapped_parameters is None:
+            return None
+        return [
+            UnwrappedParameters(
+                parameters=parameter_map.get(item.parameters, item.parameters),
+                pruning_dim=item.pruning_dim,
+            )
+            for item in unwrapped_parameters
+        ]
+
+    @staticmethod
+    def _remap_reference(item, module_map, parameter_map):
+        if item in module_map:
+            return module_map[item]
+        if item in parameter_map:
+            return parameter_map[item]
+        return item

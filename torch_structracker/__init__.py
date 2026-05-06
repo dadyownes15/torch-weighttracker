@@ -2,7 +2,7 @@
 
 from importlib.util import find_spec
 
-from torch_structracker._version import __version__
+from _version import __version__
 
 __all__ = ["__version__"]
 

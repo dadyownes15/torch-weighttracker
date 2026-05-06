@@ -105,9 +105,9 @@ class L2Weight(WeightOperation):
 
 def pruner_to_operation_map(handler, task) -> WeightOperation:
     if handler == prune_linear_in_channels:
-        return WeightOperation.create(WeightOperationType.SUM,dim=1)
-    elif handler == prune_linear_out_channels:
         return WeightOperation.create(WeightOperationType.SUM,dim=0)
+    elif handler == prune_linear_out_channels:
+        return WeightOperation.create(WeightOperationType.SUM,dim=1)
     else:
         raise ValueError("Un implemented handler in weight op mathcing")
 

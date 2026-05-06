@@ -48,4 +48,22 @@ class WeightReducer(nn.Module):
         return self.operation(self.parameter_extractor.get()) 
     
 
+    def __key(self):
+        op = self.operation
+        return (
+            id(self.parameter_extractor.module),
+            self.parameter_extractor.name,
+            type(op),
+            getattr(op, "dim", None),
+            getattr(op, "keepdim", None),
+        )
+
+    def __hash__(self):
+        return hash(self.__key())
+
+    def __eq__(self, other):
+        if not isinstance(other, WeightReducer):
+            return NotImplemented
+        return self.__key() == other.__key()
+
 

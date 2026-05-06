@@ -1,13 +1,10 @@
-import torch.nn as nn
+from torch_structracker.calculations import CalculationType
+from torch_structracker.regularizers.base import BaseRegularizer, RegularizerType
 
-class GroupLasso(nn.Module):
-    def __init__(self, model: nn.Module, *args, **kwargs) -> None:
-        super().__init__(*args, **kwargs)
-        # Build the different calculatiuons using a generalized build_calcs 
-         
-    
+
+class GroupLasso(BaseRegularizer):
+    regularizer_type = RegularizerType.GROUP_LASSO
+    required_calculations = (CalculationType.STRUCTURED_UNIT_SUM,)
+
     def forward(self):
-        # Compute norm
-        # Compute  compute count using norm and the and square
-        # 
-        # Multiply the two 
+        raise NotImplementedError("GroupLasso is not implemented yet.")

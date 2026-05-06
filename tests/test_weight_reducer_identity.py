@@ -1,7 +1,16 @@
 import torch.nn as nn
 
-from torch_structracker.weight_operations import MeanWeight, SumWeight
-from torch_structracker.weight_reducers import ParameterExtractor, WeightReducer
+from torch_structracker.operations import (
+    MeanWeight,
+    QKVSourceOperation,
+    SumWeight,
+    WeightOperationType,
+)
+from torch_structracker.reducers import (
+    ParameterExtractor,
+    ParameterTupleExtractor,
+    WeightReducer,
+)
 
 
 def test_weight_reducer_can_be_found_in_dict_by_equivalent_reducer():
@@ -52,3 +61,32 @@ def test_weight_reducer_identity_distinguishes_modules():
     reducers = {reducer: [0, 1]}
 
     assert other_module_reducer not in reducers
+
+
+def test_weight_reducer_identity_supports_parameter_tuple_extractors():
+    q_projection = nn.Linear(2, 2)
+    k_projection = nn.Linear(2, 2)
+    v_projection = nn.Linear(2, 2)
+    reducer = WeightReducer(
+        parameter_extractor=ParameterTupleExtractor(
+            ParameterExtractor(q_projection),
+            ParameterExtractor(k_projection),
+            ParameterExtractor(v_projection),
+        ),
+        operation=QKVSourceOperation(
+            operation_type=WeightOperationType.SUM,
+        ),
+    )
+    equivalent_reducer = WeightReducer(
+        parameter_extractor=ParameterTupleExtractor(
+            ParameterExtractor(q_projection),
+            ParameterExtractor(k_projection),
+            ParameterExtractor(v_projection),
+        ),
+        operation=QKVSourceOperation(
+            operation_type=WeightOperationType.SUM,
+        ),
+    )
+    reducers = {reducer: [0]}
+
+    assert equivalent_reducer in reducers

@@ -1,7 +1,17 @@
 import torch
-import torch.nn as nn
 
-class ParamUnitCount(nn.Module):
+from torch_structracker.calculations.base import BaseCalculation, CalculationType
+
+
+def initialize_axis_slices_and_updates_from_groups(groups, device=None):
+    raise NotImplementedError(
+        "StructuredUnitCount axis/update initialization is not implemented yet."
+    )
+
+
+class StructuredUnitCountFromNorm(BaseCalculation):
+    calculation_type = CalculationType.STRUCTURED_UNIT_COUNT_FROM_NORM
+
     def __init__(
         self,
         groups,
@@ -57,7 +67,6 @@ class ParamUnitCount(nn.Module):
 
     @torch.no_grad()
     def forward(self, unit_norms):
-
         if unit_norms.ndim != 1:
             unit_norms = unit_norms.reshape(-1)
 
@@ -71,17 +80,14 @@ class ParamUnitCount(nn.Module):
         acc = self.accumulator
         acc.zero_()
 
-        # Direct contribution.
         acc.add_(self.initial_counts * self.zero_mask.to(acc.dtype))
 
-        # Count zero units per axis/module pair.
         az = self.axis_zero_counts
         az.zero_()
 
         for axis_id, axis_slice in enumerate(self.axis_slices):
             az[axis_id] = self.zero_mask[axis_slice.indices].sum().to(az.dtype)
 
-        # Apply module-axis effects.
         for update in self.updates:
             n_zero = az[update.source_axis_id]
 
@@ -89,10 +95,7 @@ class ParamUnitCount(nn.Module):
                 continue
 
             target_indices = self.axis_slices[update.target_axis_id].indices
-
-            acc[target_indices].add_(
-                update.delta * n_zero
-            )
+            acc[target_indices].add_(update.delta * n_zero)
 
         torch.minimum(acc, self.initial_counts, out=acc)
 

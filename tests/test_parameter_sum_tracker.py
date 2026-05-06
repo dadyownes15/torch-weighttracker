@@ -1,8 +1,10 @@
 import torch
 import torch.nn as nn
 
-from torch_structracker.calculations import StructuredUnitSum
+from torch_structracker import StructureTracker
+from torch_structracker.calculations import CalculationType
 from torch_structracker.torch_pruning.dependency import DependencyGraph
+from torch_structracker.trackers import ParameterSumTracker, TrackerType
 
 
 class TinyMLP(nn.Module):
@@ -18,7 +20,12 @@ class TinyMLP(nn.Module):
         return self.net(x)
 
 
-def test_param_unit_calculator_counts_linear_units_for_tiny_mlp():
+class GradProbeCalculation:
+    def __call__(self):
+        return torch.tensor([float(torch.is_grad_enabled())])
+
+
+def linear_groups_from_tiny_mlp():
     model = TinyMLP()
     with torch.no_grad():
         model.net[0].weight.copy_(
@@ -44,12 +51,31 @@ def test_param_unit_calculator_counts_linear_units_for_tiny_mlp():
         model=model,
         example_inputs=torch.ones(1, 2),
     )
-    groups = list(graph.get_all_groups(root_module_types=[nn.Linear]))
+    return model, list(graph.get_all_groups(root_module_types=[nn.Linear]))
 
-    calculator = StructuredUnitSum.from_groups(groups)
 
-    assert calculator.output_length == 6
+def test_parameter_sum_tracker_tracks_structured_unit_sum_metrics():
+    model, groups = linear_groups_from_tiny_mlp()
+    struct_tracker = StructureTracker(model=model, groups=groups)
+
+    tracker = struct_tracker.create_tracker(TrackerType.PARAMETER_SUM)
+    metrics = tracker.track()
+
+    assert isinstance(tracker, ParameterSumTracker)
     torch.testing.assert_close(
-        calculator(),
+        metrics["structured_unit_sum"],
         torch.tensor([27.0, 37.0, 47.0, 20.0, 26.0, 32.0]),
     )
+    assert metrics["parameter_sum"] == 189.0
+
+
+def test_parameter_sum_tracker_compute_is_no_grad():
+    tracker = ParameterSumTracker(
+        calculations={
+            CalculationType.STRUCTURED_UNIT_SUM: GradProbeCalculation(),
+        }
+    )
+
+    result = tracker.compute()
+
+    torch.testing.assert_close(result, torch.tensor([0.0]))

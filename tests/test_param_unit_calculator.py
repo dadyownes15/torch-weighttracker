@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 
-from torch_structracker.regularizers import ParamUnitCalculator
+from torch_structracker.regularizers import ParamUnitSum
 from torch_structracker.torch_pruning.dependency import DependencyGraph
 
 
@@ -46,7 +46,7 @@ def test_param_unit_calculator_counts_linear_units_for_tiny_mlp():
     )
     groups = list(graph.get_all_groups(root_module_types=[nn.Linear]))
 
-    calculator = ParamUnitCalculator(groups)
+    calculator = ParamUnitSum(groups)
 
     assert calculator.unit_count == 6
     torch.testing.assert_close(

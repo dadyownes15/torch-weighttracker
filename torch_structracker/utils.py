@@ -1,3 +1,4 @@
+from enum import Enum
 from typing import List
 
 from torch_structracker.torch_pruning.dependency import constants
@@ -7,6 +8,11 @@ from torch_structracker.torch_pruning.pruner.function import prune_linear_out_ch
 from torch_structracker.weight_operations import pruner_to_operation_map
 from torch_structracker.weight_reducers import ParameterExtractor, WeightOperation, WeightReducer
 
+
+class structureAxis(Enum):
+    OUT = 0
+    IN = 1
+    
 
 
 def initialize_from_groups(groups: List[Group]): 

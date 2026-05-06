@@ -3,7 +3,15 @@ import torch
 
 from torch_structracker.utils import initialize_from_groups
 
-class ParamUnitCalculator(nn.Module):
+class ParamUnitCount():
+    def __init__(self, reductions) -> None:
+        pass
+        
+        for reduction in reductions:
+            
+
+
+class ParamUnitSum(nn.Module):
     def __init__(self, groups, device=None, dtype=None) -> None:
         super().__init__()
 

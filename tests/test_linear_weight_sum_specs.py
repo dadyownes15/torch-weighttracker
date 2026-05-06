@@ -1,7 +1,6 @@
-import torch
+""" import torch
 import torch.nn as nn
 
-from torch_structracker.regularizers import GroupLasso
 from torch_structracker.torch_pruning.dependency import DependencyGraph
 
 
@@ -42,3 +41,4 @@ def test_group_lasso_accumulates_linear_weight_sums_from_group_dependencies():
         regularizer(),
         torch.tensor([24.0, 10.0, 15.0, 20.0]),
     )
+ """

@@ -5,6 +5,7 @@ from torch_structracker.extractor import (
     ParameterExtractor,
     ParameterTupleExtractor,
     SeparateQKVExtractor,
+    TensorExtractor,
 )
 from torch_structracker.operations import WeightOperation
 
@@ -17,6 +18,7 @@ class WeightReducer(nn.Module):
             | ParameterTupleExtractor
             | FusedQKVExtractor
             | SeparateQKVExtractor
+            | TensorExtractor
         ),
         operation: WeightOperation,
     ):
@@ -25,18 +27,18 @@ class WeightReducer(nn.Module):
         self.parameter_extractor = parameter_extractor
 
     def forward(self):
-        return self.operation(self.parameter_extractor.get())
+        return self.operation(self.parameter_extractor.get()).reshape(-1)
 
-    def __key(self):
+    def identity_key(self):
         return (
             self.parameter_extractor.identity_key(),
             self.operation.identity_key(),
         )
 
     def __hash__(self):
-        return hash(self.__key())
+        return hash(self.identity_key())
 
     def __eq__(self, other):
         if not isinstance(other, WeightReducer):
             return NotImplemented
-        return self.__key() == other.__key()
+        return self.identity_key() == other.identity_key()

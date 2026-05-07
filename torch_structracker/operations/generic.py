@@ -19,37 +19,27 @@ class _DimensionalWeightOperation(WeightOperation):
 
 class SumWeight(_DimensionalWeightOperation):
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        if self.dim == ():
-            return weight
         return weight.sum(dim=self.dim, keepdim=self.keepdim)
 
 
 class MeanWeight(_DimensionalWeightOperation):
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        if self.dim == ():
-            return weight
         return weight.mean(dim=self.dim, keepdim=self.keepdim)
 
 
 class CountWeight(_DimensionalWeightOperation):
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
         ones = torch.ones_like(weight)
-        if self.dim == ():
-            return ones
         return ones.sum(dim=self.dim, keepdim=self.keepdim)
 
 
 class L1Weight(_DimensionalWeightOperation):
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        if self.dim == ():
-            return weight.abs()
         return weight.abs().sum(dim=self.dim, keepdim=self.keepdim)
 
 
 class L2Weight(_DimensionalWeightOperation):
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        if self.dim == ():
-            return weight.abs()
         return torch.sqrt((weight**2).sum(dim=self.dim, keepdim=self.keepdim))
 
 

@@ -3,7 +3,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from torch_structracker.reducer_plan import ReducerPlan
+from torch_structracker.reducer_plan import IndexedTarget, ReducerPlan, SegmentTarget
 
 
 class NaiveStructuredUnitSum(nn.Module):
@@ -25,7 +25,9 @@ class NaiveStructuredUnitSum(nn.Module):
 
     @property
     def destination_tensor_allocations_per_call(self) -> int:
-        return len(self.mappings)
+        return sum(
+            1 for mapping in self.mappings if isinstance(mapping.target, IndexedTarget)
+        )
 
     @torch.no_grad()
     def forward(self) -> torch.Tensor:
@@ -40,12 +42,34 @@ class NaiveStructuredUnitSum(nn.Module):
                     dtype=values.dtype,
                 )
 
-            destination_indices = torch.tensor(
-                mapping.destination_indices,
-                dtype=torch.long,
-                device=values.device,
-            )
-            accumulator.index_add_(0, destination_indices, values)
+            target = mapping.target
+            if isinstance(target, SegmentTarget):
+                accumulator.narrow(0, target.start, target.length).add_(values)
+                continue
+
+            if isinstance(target, IndexedTarget):
+                destination_indices = torch.tensor(
+                    target.destination_indices,
+                    dtype=torch.long,
+                    device=values.device,
+                )
+                if target.source_indices is None:
+                    accumulator.index_add_(0, destination_indices, values)
+                    continue
+
+                source_indices = torch.tensor(
+                    target.source_indices,
+                    dtype=torch.long,
+                    device=values.device,
+                )
+                accumulator.index_add_(
+                    0,
+                    destination_indices,
+                    values.index_select(0, source_indices),
+                )
+                continue
+
+            raise TypeError(f"Unknown reducer target type: {type(target)!r}")
 
         if accumulator is None:
             raise RuntimeError("NaiveStructuredUnitSum cannot run an empty plan.")

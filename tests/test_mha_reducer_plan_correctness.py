@@ -6,6 +6,7 @@ import torch.nn as nn
 from torch_structracker.extractor import FusedQKVExtractor, SeparateQKVExtractor
 from torch_structracker.operations import WeightOperationType
 from torch_structracker.reducer_plan import (
+    SegmentTarget,
     compile_reducer_plan_from_groups,
     validate_reducer_plan,
 )
@@ -112,6 +113,12 @@ def fused_qkv_mappings(plan, module):
     ]
 
 
+def assert_segment_target(mapping, start, length):
+    assert isinstance(mapping.target, SegmentTarget)
+    assert mapping.target.start == start
+    assert mapping.target.length == length
+
+
 @pytest.mark.parametrize("operation_type", list(WeightOperationType))
 def test_direct_fused_mha_plan_matches_exact_raw_qkv_reduction(operation_type):
     model = DirectFusedMHA().eval()
@@ -133,7 +140,8 @@ def test_direct_fused_mha_plan_matches_exact_raw_qkv_reduction(operation_type):
         plan.mappings[0].reducer.parameter_extractor,
         FusedQKVExtractor,
     )
-    assert plan.mappings[0].destination_indices == tuple(range(4)) * 3
+    assert_segment_target(plan.mappings[0], start=0, length=4)
+    assert plan.mappings[0].reducer().numel() == model.mha.embed_dim
 
     row_values = qkv_row_reductions(model.mha.in_proj_weight, operation_type)
     expected = expected_qkv_output(row_values, embed_dim=model.mha.embed_dim)
@@ -161,7 +169,8 @@ def test_direct_fused_mha_prune_dim_plan_matches_exact_head_dim_reduction():
     validate_reducer_plan(plan)
     assert plan.output_length == model.mha.head_dim
     assert len(plan.mappings) == 1
-    assert plan.mappings[0].destination_indices == (0, 1, 0, 1) * 3
+    assert_segment_target(plan.mappings[0], start=0, length=model.mha.head_dim)
+    assert plan.mappings[0].reducer().numel() == model.mha.head_dim
 
     row_values = qkv_row_reductions(model.mha.in_proj_weight, WeightOperationType.SUM)
     expected = expected_qkv_output(
@@ -194,7 +203,8 @@ def test_direct_fused_mha_prune_num_heads_plan_matches_exact_head_reduction():
     validate_reducer_plan(plan)
     assert plan.output_length == model.mha.num_heads
     assert len(plan.mappings) == 1
-    assert plan.mappings[0].destination_indices == (0, 0, 1, 1) * 3
+    assert_segment_target(plan.mappings[0], start=0, length=model.mha.num_heads)
+    assert plan.mappings[0].reducer().numel() == model.mha.num_heads
 
     row_values = qkv_row_reductions(model.mha.in_proj_weight, WeightOperationType.SUM)
     expected = expected_qkv_output(
@@ -236,7 +246,8 @@ def test_direct_separate_mha_plan_uses_one_combined_qkv_mapping(operation_type):
         plan.mappings[0].reducer.parameter_extractor,
         SeparateQKVExtractor,
     )
-    assert plan.mappings[0].destination_indices == tuple(range(4)) * 3
+    assert_segment_target(plan.mappings[0], start=0, length=4)
+    assert plan.mappings[0].reducer().numel() == model.mha.embed_dim
 
     row_values = torch.cat(
         [
@@ -274,8 +285,8 @@ def test_fused_qkv_linear_dependency_group_matches_exact_head_dim_reduction():
     qkv_mappings = fused_qkv_mappings(plan, model.qkv)
     assert plan.output_length == 2
     assert len(qkv_mappings) == 1
-    assert len(qkv_mappings[0].destination_indices) == 12
-    assert qkv_mappings[0].destination_indices == (0, 1, 0, 1) * 3
+    assert_segment_target(qkv_mappings[0], start=0, length=2)
+    assert qkv_mappings[0].reducer().numel() == 2
 
     row_values = qkv_row_reductions(model.qkv.weight, WeightOperationType.SUM)
     expected = expected_qkv_output(
@@ -312,8 +323,8 @@ def test_fused_qkv_linear_dependency_group_matches_exact_head_reduction():
     qkv_mappings = fused_qkv_mappings(plan, model.qkv)
     assert plan.output_length == 2
     assert len(qkv_mappings) == 1
-    assert len(qkv_mappings[0].destination_indices) == 12
-    assert qkv_mappings[0].destination_indices == (0, 0, 1, 1) * 3
+    assert_segment_target(qkv_mappings[0], start=0, length=2)
+    assert qkv_mappings[0].reducer().numel() == 2
 
     row_values = qkv_row_reductions(model.qkv.weight, WeightOperationType.SUM)
     expected = expected_qkv_output(
@@ -353,8 +364,5 @@ def test_real_timm_vit_qkv_plan_uses_single_fused_qkv_reducer_mapping():
     qkv_mappings = fused_qkv_mappings(plan, attention.qkv)
     assert plan.output_length == attention.num_heads
     assert len(qkv_mappings) == 1
-    assert qkv_mappings[0].reducer().numel() == attention.qkv.out_features
-    assert len(qkv_mappings[0].destination_indices) == attention.qkv.out_features
-    assert set(qkv_mappings[0].destination_indices) == set(
-        range(attention.num_heads)
-    )
+    assert_segment_target(qkv_mappings[0], start=0, length=attention.num_heads)
+    assert qkv_mappings[0].reducer().numel() == attention.num_heads

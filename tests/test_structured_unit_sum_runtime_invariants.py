@@ -3,7 +3,7 @@ import torch.nn as nn
 
 from torch_structracker.calculations import StructuredUnitSum
 from torch_structracker.operations import (
-    QKVSourceOperation,
+    QKVSemanticOperation,
     WeightOperation,
     WeightOperationType,
 )
@@ -28,9 +28,13 @@ class CountingRowSum(WeightOperation):
         return weight.sum(dim=1)
 
 
-class CountingQKVSourceOperation(QKVSourceOperation):
+class CountingQKVSemanticOperation(QKVSemanticOperation):
     def __init__(self):
-        super().__init__(WeightOperationType.SUM)
+        super().__init__(
+            operation_type=WeightOperationType.SUM,
+            embed_dim=4,
+            mode="channel",
+        )
         self.call_count = 0
 
     def forward(self, weight):
@@ -96,7 +100,7 @@ def make_counted_plan():
 
 def test_structured_unit_sum_runs_each_reducer_once_per_forward():
     plan, operations = make_counted_plan()
-    calculation = StructuredUnitSum(plan)
+    calculation = StructuredUnitSum(plan, validate=False)
 
     first_result = calculation()
     second_result = calculation()
@@ -115,7 +119,7 @@ def test_structured_unit_sum_runs_each_reducer_once_per_forward():
 
 def test_structured_unit_sum_reuses_destination_and_accumulator_buffers():
     plan, _ = make_counted_plan()
-    calculation = StructuredUnitSum(plan)
+    calculation = StructuredUnitSum(plan, validate=False)
 
     before = buffer_snapshot(calculation)
     destination_ptrs = tuple(dst.data_ptr() for dst in calculation.destination_indices)
@@ -144,9 +148,9 @@ def test_structured_unit_sum_runs_real_qkv_reducer_once_per_forward():
         groups,
         operation_type=WeightOperationType.SUM,
     )
-    qkv_operation = CountingQKVSourceOperation()
+    qkv_operation = CountingQKVSemanticOperation()
     plan.mappings[0].reducer.operation = qkv_operation
-    calculation = StructuredUnitSum(plan)
+    calculation = StructuredUnitSum(plan, validate=False)
 
     calculation()
     calculation()
@@ -157,7 +161,7 @@ def test_structured_unit_sum_runs_real_qkv_reducer_once_per_forward():
 
 def test_structured_unit_sum_forward_does_not_rebuild_destination_tensors(monkeypatch):
     plan, _ = make_counted_plan()
-    calculation = StructuredUnitSum(plan)
+    calculation = StructuredUnitSum(plan, validate=False)
     expected = torch.tensor([14.0, 22.0])
 
     def fail_tensor_creation(*args, **kwargs):

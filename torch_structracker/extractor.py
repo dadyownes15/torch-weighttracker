@@ -1,8 +1,37 @@
+from typing import Hashable, Protocol, TypeAlias
+
 import torch
 import torch.nn as nn
 
 
-class ParameterExtractor:
+TensorValue: TypeAlias = torch.Tensor | tuple[torch.Tensor, ...]
+
+
+class TensorExtractor(Protocol):
+    def get(self) -> TensorValue:
+        ...
+
+    def identity_key(self) -> Hashable:
+        ...
+
+    def first_tensor(self) -> torch.Tensor:
+        ...
+
+
+class BaseExtractor:
+    def first_tensor(self) -> torch.Tensor:
+        value = self.get()
+
+        if isinstance(value, torch.Tensor):
+            return value
+
+        if len(value) == 0:
+            raise RuntimeError("Extractor returned an empty tensor tuple.")
+
+        return value[0]
+
+
+class ParameterExtractor(BaseExtractor):
     """
     Non-owning reference to a parameter or tensor attribute on an existing module.
 
@@ -41,7 +70,7 @@ class ParameterExtractor:
         return (id(self.module), self.name)
 
 
-class ParameterTupleExtractor:
+class ParameterTupleExtractor(BaseExtractor):
     """Non-owning extractor for operations that consume multiple parameters."""
 
     def __init__(self, *extractors: ParameterExtractor):
@@ -66,7 +95,7 @@ class FusedQKVExtractor(ParameterExtractor):
         return ("fused_qkv", *super().identity_key())
 
 
-class SeparateQKVExtractor:
+class SeparateQKVExtractor(BaseExtractor):
     """Extractor for separate q_proj_weight, k_proj_weight, and v_proj_weight."""
 
     def __init__(

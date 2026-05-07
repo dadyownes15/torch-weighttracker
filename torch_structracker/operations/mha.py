@@ -8,138 +8,189 @@ def raise_mha_not_implemented(module: nn.MultiheadAttention):
     raise ValueError("MHA reducer plan creation is not implemented yet.")
 
 
-class _MHAOperation(WeightOperation):
-    def __init__(self, operation_type: WeightOperationType | str) -> None:
+def _reduce_rows(
+    weight: torch.Tensor,
+    operation_type: WeightOperationType | str,
+) -> torch.Tensor:
+    operation = WeightOperationType(operation_type)
+
+    if weight.ndim == 0:
+        raise ValueError("QKV operations require at least one source dimension.")
+
+    flat = weight.reshape(weight.shape[0], -1)
+
+    if operation == WeightOperationType.SUM:
+        return flat.sum(dim=1)
+
+    if operation == WeightOperationType.MEAN:
+        return flat.mean(dim=1)
+
+    if operation == WeightOperationType.COUNT:
+        return torch.ones_like(flat).sum(dim=1)
+
+    if operation == WeightOperationType.L1:
+        return flat.abs().sum(dim=1)
+
+    if operation == WeightOperationType.L2:
+        return torch.sqrt((flat**2).sum(dim=1))
+
+    raise ValueError(f"Unsupported QKV operation: {operation_type}")
+
+
+class QKVSourceOperation(WeightOperation):
+    """Compatibility operation that returns reduced native Q/K/V source rows."""
+
+    def __init__(self, operation_type: WeightOperationType | str):
         super().__init__()
         self.operation_type = WeightOperationType(operation_type)
-        self._row_reducer = _row_reducer_for_operation(self.operation_type)
+
+    def forward(
+        self,
+        value: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    ) -> torch.Tensor:
+        if isinstance(value, tuple):
+            if len(value) != 3:
+                raise ValueError("QKVSourceOperation requires exactly 3 tensors.")
+            return torch.cat(
+                tuple(_reduce_rows(weight, self.operation_type) for weight in value)
+            )
+
+        return _reduce_rows(value, self.operation_type)
 
     def identity_key(self):
-        return (type(self), self.operation_type)
-
-    def _reduce_rows(self, weight: torch.Tensor) -> torch.Tensor:
-        return self._row_reducer(weight)
+        return ("qkv_source", self.operation_type.value)
 
 
-class QKVSourceOperation(_MHAOperation):
-    """Reduce QKV source rows without collapsing their structural grouping."""
+class QKVSemanticOperation(WeightOperation):
+    """Return the final semantic channel/head/head-dim vector for QKV weights."""
 
-    def forward(self, qkv_source) -> torch.Tensor:
-        if isinstance(qkv_source, torch.Tensor):
-            return self._reduce_rows(qkv_source).reshape(-1)
-
-        if len(qkv_source) != 3:
-            raise ValueError("QKVSourceOperation expects fused QKV or q, k, v weights.")
-
-        q_weight, k_weight, v_weight = qkv_source
-        return torch.cat(
-            [
-                self._reduce_rows(q_weight).reshape(-1),
-                self._reduce_rows(k_weight).reshape(-1),
-                self._reduce_rows(v_weight).reshape(-1),
-            ]
-        )
-
-
-class FusedQKVEmbedDimOperation(_MHAOperation):
     def __init__(
         self,
         operation_type: WeightOperationType | str,
         embed_dim: int,
-    ) -> None:
-        super().__init__(operation_type)
+        num_heads: int | None = None,
+        mode: str = "channel",
+    ):
+        super().__init__()
+        self.operation_type = WeightOperationType(operation_type)
         self.embed_dim = int(embed_dim)
+        self.num_heads = None if num_heads is None else int(num_heads)
+        self.mode = str(mode)
 
-    def identity_key(self):
-        return (*super().identity_key(), self.embed_dim)
+        if self.embed_dim <= 0:
+            raise ValueError("QKVSemanticOperation.embed_dim must be positive.")
 
-    def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        row_values = self._reduce_rows(weight)
-        return row_values.reshape(3, self.embed_dim).sum(dim=0)
+        if self.mode not in {"channel", "head", "head_dim"}:
+            raise ValueError(f"Unknown QKV semantic mode: {self.mode}")
 
+        if self.mode != "channel":
+            if self.num_heads is None or self.num_heads <= 0:
+                raise ValueError(
+                    "QKVSemanticOperation.num_heads must be positive for "
+                    f"{self.mode!r} mode."
+                )
 
-class FusedQKVHeadOperation(_MHAOperation):
-    def __init__(
+            if self.embed_dim % self.num_heads != 0:
+                raise ValueError("QKV embed_dim must be divisible by num_heads.")
+
+    def forward(
         self,
-        operation_type: WeightOperationType | str,
-        num_heads: int,
-        head_dim: int,
-    ) -> None:
-        super().__init__(operation_type)
-        self.num_heads = int(num_heads)
-        self.head_dim = int(head_dim)
+        value: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    ) -> torch.Tensor:
+        values = self._semantic_row_values(value)
 
-    def identity_key(self):
-        return (*super().identity_key(), self.num_heads, self.head_dim)
+        if self.mode == "channel":
+            return values.sum(dim=0)
 
-    def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        row_values = self._reduce_rows(weight)
-        return row_values.reshape(3, self.num_heads, self.head_dim).sum(dim=(0, 2))
+        assert self.num_heads is not None
+        head_dim = self.embed_dim // self.num_heads
+        values = values.reshape(3, self.num_heads, head_dim)
 
+        if self.mode == "head":
+            return values.sum(dim=(0, 2))
 
-class SeparateQKVHeadOperation(_MHAOperation):
-    def __init__(
+        if self.mode == "head_dim":
+            return values.sum(dim=(0, 1))
+
+        raise ValueError(f"Unknown QKV semantic mode: {self.mode}")
+
+    def _semantic_row_values(
         self,
-        operation_type: WeightOperationType | str,
-        num_heads: int,
-        head_dim: int,
-    ) -> None:
-        super().__init__(operation_type)
-        self.num_heads = int(num_heads)
-        self.head_dim = int(head_dim)
+        value: torch.Tensor | tuple[torch.Tensor, torch.Tensor, torch.Tensor],
+    ) -> torch.Tensor:
+        if isinstance(value, tuple):
+            if len(value) != 3:
+                raise ValueError("QKVSemanticOperation requires exactly 3 tensors.")
+
+            row_values = tuple(
+                _reduce_rows(weight, self.operation_type) for weight in value
+            )
+
+            for values in row_values:
+                if values.numel() != self.embed_dim:
+                    raise ValueError(
+                        "Separate QKV tensors must each have embed_dim source rows."
+                    )
+
+            return torch.stack(row_values, dim=0)
+
+        expected_rows = 3 * self.embed_dim
+        if value.shape[0] != expected_rows:
+            raise ValueError(
+                "Fused QKV tensor has "
+                f"{value.shape[0]} source rows, expected {expected_rows}."
+            )
+
+        return _reduce_rows(value, self.operation_type).reshape(3, self.embed_dim)
 
     def identity_key(self):
-        return (*super().identity_key(), self.num_heads, self.head_dim)
-
-    def forward(self, weights) -> torch.Tensor:
-        if len(weights) != 3:
-            raise ValueError("SeparateQKVHeadOperation expects q, k, and v weights.")
-
-        q_weight, k_weight, v_weight = weights
-        row_values = torch.stack(
-            [
-                self._reduce_rows(q_weight),
-                self._reduce_rows(k_weight),
-                self._reduce_rows(v_weight),
-            ],
+        return (
+            "qkv_semantic",
+            self.operation_type.value,
+            self.embed_dim,
+            self.num_heads,
+            self.mode,
         )
-        return row_values.reshape(3, self.num_heads, self.head_dim).sum(dim=(0, 2))
 
 
-def _row_reducer_for_operation(operation_type: WeightOperationType):
-    if operation_type == WeightOperationType.SUM:
-        return _sum_rows
-
-    if operation_type == WeightOperationType.MEAN:
-        return _mean_rows
-
-    if operation_type == WeightOperationType.COUNT:
-        return _count_rows
-
-    if operation_type == WeightOperationType.L1:
-        return _l1_rows
-
-    if operation_type == WeightOperationType.L2:
-        return _l2_rows
-
-    raise ValueError(f"Unknown MHA operation type: {operation_type}")
+class FusedQKVEmbedDimOperation(QKVSemanticOperation):
+    def __init__(self, operation_type: WeightOperationType | str, embed_dim: int):
+        super().__init__(
+            operation_type=operation_type,
+            embed_dim=embed_dim,
+            mode="channel",
+        )
 
 
-def _sum_rows(weight: torch.Tensor) -> torch.Tensor:
-    return weight.sum(dim=1)
+class FusedQKVHeadOperation(QKVSemanticOperation):
+    def __init__(
+        self,
+        operation_type: WeightOperationType | str,
+        num_heads: int,
+        head_dim: int,
+    ):
+        super().__init__(
+            operation_type=operation_type,
+            embed_dim=int(num_heads) * int(head_dim),
+            num_heads=num_heads,
+            mode="head",
+        )
 
 
-def _mean_rows(weight: torch.Tensor) -> torch.Tensor:
-    return weight.mean(dim=1)
+class FusedQKVHeadDimOperation(QKVSemanticOperation):
+    def __init__(
+        self,
+        operation_type: WeightOperationType | str,
+        num_heads: int,
+        head_dim: int,
+    ):
+        super().__init__(
+            operation_type=operation_type,
+            embed_dim=int(num_heads) * int(head_dim),
+            num_heads=num_heads,
+            mode="head_dim",
+        )
 
 
-def _count_rows(weight: torch.Tensor) -> torch.Tensor:
-    return torch.ones_like(weight).sum(dim=1)
-
-
-def _l1_rows(weight: torch.Tensor) -> torch.Tensor:
-    return weight.abs().sum(dim=1)
-
-
-def _l2_rows(weight: torch.Tensor) -> torch.Tensor:
-    return torch.sqrt((weight**2).sum(dim=1))
+class SeparateQKVHeadOperation(FusedQKVHeadOperation):
+    pass

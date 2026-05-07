@@ -13,7 +13,9 @@ from torch_structracker.operations.generic import (
 )
 from torch_structracker.operations.mha import (
     FusedQKVEmbedDimOperation,
+    FusedQKVHeadDimOperation,
     FusedQKVHeadOperation,
+    QKVSemanticOperation,
     QKVSourceOperation,
     SeparateQKVHeadOperation,
 )
@@ -28,9 +30,11 @@ __all__ = [
     "L2Weight",
     "MeanWeight",
     "QKVSourceOperation",
+    "QKVSemanticOperation",
     "ReductionDim",
     "FusedQKVEmbedDimOperation",
     "FusedQKVHeadOperation",
+    "FusedQKVHeadDimOperation",
     "SeparateQKVHeadOperation",
     "SumWeight",
     "WeightOperation",

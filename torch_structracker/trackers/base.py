@@ -31,16 +31,11 @@ class BaseTracker(ABC):
 
 
 def tracker_class_for_type(tracker_type: TrackerType):
-    from torch_structracker.trackers.bobs_tracker import BobsTracker
-    from torch_structracker.trackers.parameter_sum import ParameterSumTracker
-    from torch_structracker.trackers.structured_sparsity import (
-        StructuredSparsityTracker,
-    )
-
     tracker_type = TrackerType(tracker_type)
-    tracker_classes = {
-        TrackerType.PARAMETER_SUM: ParameterSumTracker,
-        TrackerType.STRUCTURED_SPARSITY: StructuredSparsityTracker,
-        TrackerType.BOBS_TRACKER: BobsTracker,
-    }
-    return tracker_classes[tracker_type]
+
+    if tracker_type == TrackerType.PARAMETER_SUM:
+        from torch_structracker.trackers.parameter_sum import ParameterSumTracker
+
+        return ParameterSumTracker
+
+    raise ValueError(f"Tracker type is not registered yet: {tracker_type}")

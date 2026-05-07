@@ -6,7 +6,6 @@ import torch.nn as nn
 from torch_structracker.operations import SumWeight, WeightOperationType
 from torch_structracker.reducer_plan import (
     ReducerMapping,
-    add_mapping,
     compile_reducer_plan_from_groups,
     create_reducer_mappings_for_member,
     validate_reducer_plan,
@@ -83,29 +82,6 @@ def test_create_reducer_mappings_reads_linear_member():
     assert isinstance(mapping.reducer.operation, SumWeight)
     assert mapping.reducer.operation.dim == 1
     assert mapping.destination_indices == (3, 4)
-
-
-def test_add_mapping_extends_existing_reducer_mapping():
-    reducer = WeightReducer(
-        parameter_extractor=ParameterExtractor(nn.Linear(2, 3)),
-        operation=SumWeight(dim=0),
-    )
-    mappings = {
-        reducer: ReducerMapping(
-            reducer=reducer,
-            destination_indices=(0, 1),
-        )
-    }
-
-    add_mapping(
-        ReducerMapping(
-            reducer=reducer,
-            destination_indices=(2,),
-        ),
-        mappings,
-    )
-
-    assert mappings[reducer].destination_indices == (0, 1, 2)
 
 
 def test_compile_reducer_plan_from_groups_creates_valid_linear_plan():

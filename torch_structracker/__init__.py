@@ -7,10 +7,11 @@ except ModuleNotFoundError:
 
 from torch_structracker.calculations import (
     BaseCalculation,
+    BitRatePrModule,
     CalculationType,
-    StructuredUnitNorm,
     StructuredUnitSum,
 )
+from torch_structracker.bitrate_extractor import ModuleBitrateExtractor
 from torch_structracker.regularizers import BaseRegularizer, RegularizerType
 from torch_structracker.structure_tracker import StructureTracker
 from torch_structracker.trackers import BaseTracker, TrackerType
@@ -19,10 +20,11 @@ __all__ = [
     "BaseCalculation",
     "BaseRegularizer",
     "BaseTracker",
+    "BitRatePrModule",
     "CalculationType",
+    "ModuleBitrateExtractor",
     "RegularizerType",
     "StructureTracker",
-    "StructuredUnitNorm",
     "StructuredUnitSum",
     "TrackerType",
     "__version__",

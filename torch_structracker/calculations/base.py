@@ -7,30 +7,25 @@ import torch.nn as nn
 
 class CalculationType(str, Enum):
     STRUCTURED_UNIT_SUM = "structured_unit_sum"
-    STRUCTURED_UNIT_NORM = "structured_unit_norm"
-    STRUCTURED_UNIT_COUNT_FROM_NORM = "structured_unit_count"
+    ACTIVE_UNITS = "active_units"
+    BITRATE_PR_MODULE = "bitrate_pr_module"
+    UNITS_TO_MODULE = "units_to_module"
 
 
 class BaseCalculation(nn.Module, ABC):
-    calculation_type: CalculationType
-
-    @classmethod
-    def from_groups(cls, groups, device=None, dtype=None, **kwargs):
-        return cls(groups, device=device, dtype=dtype)
-
     @abstractmethod
     def forward(self, *args, **kwargs) -> torch.Tensor:
         raise NotImplementedError
 
 
 def calculation_class_for_type(calculation_type: CalculationType):
-    from torch_structracker.calculations.structured_unit_norm import StructuredUnitNorm
+    from torch_structracker.calculations.bit_rate_pr_module import BitRatePrModule
     from torch_structracker.calculations.structured_unit_sum import StructuredUnitSum
 
     calculation_type = CalculationType(calculation_type)
     calculation_classes = {
+        CalculationType.BITRATE_PR_MODULE: BitRatePrModule,
         CalculationType.STRUCTURED_UNIT_SUM: StructuredUnitSum,
-        CalculationType.STRUCTURED_UNIT_NORM: StructuredUnitNorm,
     }
 
     if calculation_type not in calculation_classes:
@@ -42,6 +37,7 @@ def calculation_class_for_type(calculation_type: CalculationType):
 def create_calculation(
     calculation_type: CalculationType,
     groups,
+    model=None,
     device=None,
     dtype=None,
     num_heads=None,
@@ -50,13 +46,16 @@ def create_calculation(
 ):
     calculation_type = CalculationType(calculation_type)
 
-    if calculation_type == CalculationType.STRUCTURED_UNIT_COUNT_FROM_NORM:
-        raise NotImplementedError(
-            "StructuredUnitCount creation needs initial count inputs and is not "
-            "wired into StructTracker yet."
+    calculation_cls = calculation_class_for_type(calculation_type)
+    if calculation_type == CalculationType.BITRATE_PR_MODULE:
+        if model is None:
+            raise ValueError("BITRATE_PR_MODULE requires a model.")
+        return calculation_cls.from_model(
+            model,
+            device=device,
+            dtype=dtype,
         )
 
-    calculation_cls = calculation_class_for_type(calculation_type)
     return calculation_cls.from_groups(
         groups,
         device=device,

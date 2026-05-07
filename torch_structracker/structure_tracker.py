@@ -146,10 +146,13 @@ class StructureTracker:
         return self.calculations[calculation_type]
 
     def _create_calculation(self, calculation_type: CalculationType):
-        self._require_groups(calculation_type)
+        if calculation_type != CalculationType.BITRATE_PR_MODULE:
+            self._require_groups(calculation_type)
+
         return create_calculation(
             calculation_type,
             self.groups,
+            model=self.model,
             device=self.device,
             dtype=self.dtype,
             num_heads=self.num_heads,

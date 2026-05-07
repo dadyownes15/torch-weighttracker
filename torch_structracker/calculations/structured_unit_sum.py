@@ -8,7 +8,14 @@ from torch_structracker.reducer_plan import (
     compile_reducer_plan_from_groups,
     validate_reducer_plan,
 )
+plan = compile_reducer_plan_from_groups(
 
+            groups,
+            operation_type=WeightOperationType.SUM,
+            num_heads=num_heads,
+            prune_dim=prune_dim,
+            prune_num_heads=prune_num_heads,
+        )
 
 class StructuredUnitSum(BaseCalculation):
     calculation_type = CalculationType.STRUCTURED_UNIT_SUM
@@ -85,7 +92,6 @@ class StructuredUnitSum(BaseCalculation):
     def forward(self):
         acc = self.accumulator
         acc.zero_()
-
         for reducer, dst in zip(self.reducers, self.destination_indices):
             acc.index_add_(0, dst, reducer().reshape(-1))
 

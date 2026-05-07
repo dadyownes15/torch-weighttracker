@@ -1,0 +1,65 @@
+{
+  "created_at": "2026-05-07T06:24:51.559480+00:00",
+  "benchmark": {
+    "warmup": 10,
+    "iterations": 100,
+    "repeats": 5,
+    "attention_reduction": "none",
+    "torch_threads": 6
+  },
+  "environment": {
+    "device": "cpu",
+    "torch": "2.9.0",
+    "timm": "1.0.25",
+    "python": "3.12.2"
+  },
+  "model": {
+    "name": "vit_tiny_patch16_224",
+    "img_size": 32,
+    "batch_size": 1,
+    "num_classes": 0
+  },
+  "plan": {
+    "dependency_groups": 25,
+    "mappings": 122,
+    "output_length": 16320,
+    "plan_build_ms": 168.47299999790266,
+    "naive_destination_tensor_allocations_per_call": 122,
+    "structured_destination_tensor_allocations_per_call": 0
+  },
+  "correctness": {
+    "max_abs_diff": 0.0
+  },
+  "timing": {
+    "structured": {
+      "median_ms": 4.15491584019037,
+      "mean_ms": 4.157575918070506,
+      "min_ms": 4.096651249856222,
+      "max_ms": 4.207077500177547,
+      "stdev_ms": 0.040938103690321685,
+      "samples_ms": [
+        4.15491584019037,
+        4.207077500177547,
+        4.17936958023347,
+        4.1498654198949225,
+        4.096651249856222
+      ]
+    },
+    "naive": {
+      "median_ms": 6.508824580232613,
+      "mean_ms": 6.5155539980041794,
+      "min_ms": 6.496299999998882,
+      "max_ms": 6.534522910078522,
+      "stdev_ms": 0.017630063537320398,
+      "samples_ms": [
+        6.508824580232613,
+        6.534522910078522,
+        6.504180829797406,
+        6.496299999998882,
+        6.5339416699134745
+      ]
+    },
+    "speedup_x": 1.566535841056745,
+    "median_ms_saved": 2.353908740042243
+  }
+}

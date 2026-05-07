@@ -13,27 +13,21 @@ class TrackerType(str, Enum):
 
 
 class BaseTracker(ABC):
-    tracker_type: TrackerType
     required_calculations: tuple[CalculationType, ...] = ()
 
     def __init__(self, calculations=None) -> None:
         self.calculations = {} if calculations is None else calculations
 
-    @torch.no_grad()
-    def compute(self, calculations=None):
-        calculations = self.calculations if calculations is None else calculations
-        return self._compute(calculations)
-
     @abstractmethod
-    def _compute(self, calculations):
+    def compute(self, ):
         raise NotImplementedError
 
     @abstractmethod
     def toMetric(self, result):
         raise NotImplementedError
 
-    def track(self, calculations=None):
-        return self.toMetric(self.compute(calculations))
+    def track(self):
+        return self.toMetric(self.compute())
 
 
 def tracker_class_for_type(tracker_type: TrackerType):

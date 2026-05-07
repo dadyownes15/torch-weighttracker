@@ -51,7 +51,7 @@ def add_mapping(
     if existing is None:
         mappings_by_reducer[mapping.reducer] = mapping
         return
-
+    # TODO: If so see this, please ensure to add a test so that it does not ducplicate destination indexes, such that it is a proper set. 
     mappings_by_reducer[mapping.reducer] = ReducerMapping(
         reducer=mapping.reducer,
         destination_indices=(
@@ -105,7 +105,11 @@ def compile_reducer_plan_from_groups(
         mappings=tuple(mappings_by_reducer.values()),
     )
 
+# This function creates a reducer plan, which essentially entails the ability to specif a weight operation, which gets executed, on all modules
 
+# These are the fundamental operations we use to get measurements from the actual modules. It automatically maps the appropiate operation, to the the correct type of module. For example MHA, likely needs some additional properties, to be able to function the same weight operation as a simple linear layer
+
+# TODO: We should definetly work on a more unified approach, being aple to includ and exclude modules from this. This also is important for propgating the inputs fo the struct tracker down to the actual calcs. Furthermore, we cannot specify custom extractors
 def compile_reducer_plan_from_modules(
     model: nn.Module,
     operation_type: WeightOperationType | str,
@@ -242,7 +246,8 @@ def validate_reducer_plan(plan: ReducerPlan) -> None:
 def _has_live_parameter(module: nn.Module, parameter_name: str) -> bool:
     return hasattr(module, parameter_name) and getattr(module, parameter_name) is not None
 
-
+# TODO:
+# Move this out into structuretracker, not here. Make sure the dep graph is proper setup, before passing groups. We shoud make all the reducers assume that groups are in the correct format
 def _attention_group_config(
     group,
     num_heads: dict[nn.Module, int],

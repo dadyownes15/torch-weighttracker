@@ -13,25 +13,12 @@ class TensorExtractor(Protocol):
 
     def identity_key(self) -> Hashable:
         ...
-
-    def first_tensor(self) -> torch.Tensor:
+    def output_shape(self) -> torch.Size:
         ...
 
 
-class BaseExtractor:
-    def first_tensor(self) -> torch.Tensor:
-        value = self.get()
 
-        if isinstance(value, torch.Tensor):
-            return value
-
-        if len(value) == 0:
-            raise RuntimeError("Extractor returned an empty tensor tuple.")
-
-        return value[0]
-
-
-class ParameterExtractor(BaseExtractor):
+class ParameterExtractor(TensorExtractor):
     """
     Non-owning reference to a parameter or tensor attribute on an existing module.
 
@@ -70,7 +57,7 @@ class ParameterExtractor(BaseExtractor):
         return (id(self.module), self.name)
 
 
-class ParameterTupleExtractor(BaseExtractor):
+class ParameterTupleExtractor(TensorExtractor):
     """Non-owning extractor for operations that consume multiple parameters."""
 
     def __init__(self, *extractors: ParameterExtractor):
@@ -95,7 +82,7 @@ class FusedQKVExtractor(ParameterExtractor):
         return ("fused_qkv", *super().identity_key())
 
 
-class SeparateQKVExtractor(BaseExtractor):
+class SeparateQKVExtractor(TensorExtractor):
     """Extractor for separate q_proj_weight, k_proj_weight, and v_proj_weight."""
 
     def __init__(
@@ -109,7 +96,7 @@ class SeparateQKVExtractor(BaseExtractor):
         self.q_extractor = ParameterExtractor(module, q_name)
         self.k_extractor = ParameterExtractor(module, k_name)
         self.v_extractor = ParameterExtractor(module, v_name)
-
+        
     def get(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return (
             self.q_extractor.get(),

@@ -1,0 +1,15 @@
+{
+  "venvPath": ".",
+  "venv": ".venv",
+  "pythonVersion": "3.12",
+  "include": [
+    "torch_structracker",
+    "tests",
+    "benchmarks"
+  ],
+  "executionEnvironments": [
+    {
+      "root": "."
+    }
+  ]
+}

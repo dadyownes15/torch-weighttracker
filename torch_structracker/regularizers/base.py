@@ -10,6 +10,7 @@ from torch_structracker.calculations import CalcType
 
 class RegularizerType(Enum):
     GROUP_LASSO = "group_lasso"
+    GROUP_LASSO_WITH_BITRATE = "group_lasso_with_bitrate"
 
 
 class BaseRegularizer(nn.Module, ABC):
@@ -42,7 +43,26 @@ class BaseRegularizer(nn.Module, ABC):
         raise NotImplementedError
 
     def calc(self, calc_type: CalcType) -> nn.Module:
+        calc_type = CalcType(calc_type)
         return self.calculations[calc_type.name]
-    
+
     def compute(self, calc_type: CalcType, *args, **kwargs) -> torch.Tensor:
         return self.calc(calc_type)(*args, **kwargs)
+
+
+def regularizer_class_for_type(regularizer_type: RegularizerType | str):
+    regularizer_type = RegularizerType(regularizer_type)
+
+    if regularizer_type == RegularizerType.GROUP_LASSO:
+        from torch_structracker.regularizers.group_lasso import GroupLasso
+
+        return GroupLasso
+
+    if regularizer_type == RegularizerType.GROUP_LASSO_WITH_BITRATE:
+        from torch_structracker.regularizers.group_lasso_with_bitrate import (
+            GroupLassoWithBitrate,
+        )
+
+        return GroupLassoWithBitrate
+
+    raise ValueError(f"Unknown regularizer type: {regularizer_type.value}")

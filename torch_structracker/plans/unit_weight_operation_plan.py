@@ -28,6 +28,7 @@ from torch_structracker.reductions.builder import (
     MappedReductionPlan,
     ReductionMapping,
     ReductionPlanBuilder,
+    ReductionRecord,
     SegmentSelection,
 )
 from torch_structracker.reductions.compiler import (
@@ -164,11 +165,108 @@ def create_group_member_plan(
 def create_active_units_plan(
     groups: Iterable[CanonicalUnitGroup],
 ) -> MappedReductionPlan:
-    return create_group_member_plan(groups, WeightOperationType.COUNT)
+    return create_group_member_plan(groups, WeightOperationType.ACTIVE)
+
+
+def create_l2_norm_pr_unit_plan(
+    groups: Iterable[CanonicalUnitGroup],
+) -> MappedReductionPlan:
+    return create_group_member_plan(groups, WeightOperationType.L2)
+
+
+def create_structured_unit_sum_plan(
+    groups: Iterable[CanonicalUnitGroup],
+) -> MappedReductionPlan:
+    return create_group_member_plan(groups, WeightOperationType.SUM)
+
+
+def create_group_change_effect_plan(
+    groups: Iterable[CanonicalUnitGroup],
+) -> MappedReductionPlan:
+    canonical_groups = tuple(groups)
+    planner = GenericReductionPlanner[CanonicalMember](
+        elements=canonical_members(canonical_groups),
+        output_length=len(canonical_groups),
+    )
+    compiled = planner.compile(_RepresentativeUnitToGroupRule())
+    return cast(MappedReductionPlan, compiled)
 
 
 def count_group_units(groups: Iterable[CanonicalUnitGroup]) -> int:
     return sum(group.length for group in groups)
+
+
+class _RepresentativeUnitToGroupRule:
+    def __init__(self) -> None:
+        self.extractor = CanonicalMemberTensorExtractor()
+        self.reduction_mapper = UnitWeightReductionMapper(WeightOperationType.COUNT)
+
+    def emit(
+        self,
+        element: CanonicalMember,
+        builder: ReductionPlanBuilder,
+    ) -> Iterable[ReductionRecord]:
+        source_ref = self.extractor.bind(element)
+        if source_ref is None:
+            return ()
+
+        reduction = self.reduction_mapper(element)
+        op = ReductionOp(source_ref, reduction)
+        source_indices = _representative_source_indices(element, op)
+        if len(source_indices) == 0:
+            return ()
+
+        return (
+            ReductionRecord(
+                op=op,
+                mapping=ReductionMapping(
+                    source=IndexSelection(source_indices),
+                    target=IndexSelection((element.group_id,) * len(source_indices)),
+                ),
+            ),
+        )
+
+
+def _representative_source_indices(
+    member: CanonicalMember,
+    op: ReductionOp,
+) -> tuple[int, ...]:
+    representative = int(member.group_offset)
+    target = member.destination
+
+    if isinstance(target, SegmentSelection):
+        start = int(target.start)
+        stop = start + int(target.length)
+        if representative < start or representative >= stop:
+            return ()
+
+        position = representative - start
+        if op.output_length == target.length:
+            return (position,)
+
+        member_source_indices = source_indices_for_member(member, op)
+        if position >= len(member_source_indices):
+            return ()
+        return (member_source_indices[position],)
+
+    destination_indices = tuple(int(index) for index in target.indices)
+    if op.output_length == len(destination_indices):
+        return tuple(
+            source_index
+            for source_index, destination in enumerate(destination_indices)
+            if destination == representative
+        )
+
+    member_source_indices = source_indices_for_member(member, op)
+    return tuple(
+        source_index
+        for source_index, destination in zip(
+            member_source_indices,
+            destination_indices,
+            strict=True,
+        )
+        if destination == representative
+    )
 
 
 def source_indices_for_member(

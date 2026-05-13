@@ -8,6 +8,7 @@ class CachedCalculation(nn.Module):
     def __init__(self, calculation: nn.Module) -> None:
         super().__init__()
         self.calculation = calculation
+        self.calculation_type = getattr(calculation, "calculation_type", None)
 
         if not hasattr(calculation, "output_anchor"):
             raise ValueError(
@@ -16,7 +17,7 @@ class CachedCalculation(nn.Module):
 
     @torch.no_grad()
     def refresh_cache(self, *args: Any, **kwargs: Any) -> None:
-        self.calculation(*args, **kwargs)
+        self.calculation.output_anchor = self.calculation(*args, **kwargs)
 
     def forward(self) -> torch.Tensor:
         return self.calculation.output_anchor

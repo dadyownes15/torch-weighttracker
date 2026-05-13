@@ -147,3 +147,6 @@ class ReductionCalc(nn.Module):
     def _run_indexed_gather_entries(self, out: torch.Tensor) -> None:
         for op, src, dst in self.indexed_gather_entries:
             out.index_add_(0, dst, op().index_select(0, src))
+
+
+MappedReductionCalculation = ReductionCalc

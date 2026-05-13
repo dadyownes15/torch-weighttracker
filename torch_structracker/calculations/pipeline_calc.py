@@ -1,12 +1,21 @@
 import torch
 import torch.nn as nn
 
+from torch_structracker.calculations.base import CalcType
 from torch_structracker.reductions.builder import PipelinePlan
 
 
 class PipelineCalc(nn.Module):
-    def __init__(self, plan: PipelinePlan) -> None:
+    def __init__(
+        self,
+        plan: PipelinePlan,
+        *,
+        calculation_type: CalcType | str | None = None,
+    ) -> None:
         super().__init__()
+        self.calculation_type = (
+            None if calculation_type is None else CalcType(calculation_type)
+        )
         self.plan = plan
         self.output_length = int(plan.output_length)
         self.output_shape = torch.Size(plan.output_spec.shape)

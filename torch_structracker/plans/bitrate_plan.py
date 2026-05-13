@@ -45,5 +45,9 @@ class CodeQBitrateRule:
         )
 
 
-def create_codeq_bitrates(modules: list[nn.Module]) -> MappedReductionPlan:
-    return 
+def create_codeq_bitrates(
+    modules: Iterable[nn.Module],
+    *,
+    extractor: ModuleBitrateExtractor | None = None,
+) -> MappedReductionPlan:
+    return create_module_plan(list(modules), CodeQBitrateRule(extractor))

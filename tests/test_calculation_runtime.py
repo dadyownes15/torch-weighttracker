@@ -24,6 +24,7 @@ from torch_structracker.reductions.builder import (
 from torch_structracker.reductions.ops import IdentityTensorReduction
 from torch_structracker.regularizers.group_lasso import GroupLasso
 from torch_structracker.trackers.base import BaseTracker
+from torch_structracker.trackers.structured_bops import StructuredBOPs
 
 
 class TensorOp(nn.Module):
@@ -243,19 +244,37 @@ def test_create_calculation_constructs_l2_norm_pr_unit() -> None:
 
 
 def test_group_lasso_multiplies_active_params_and_l2_norms() -> None:
-    l2_norm_pr_unit = ParameterCalculation(torch.tensor([5.0, 7.0]))
+    unit_active_mask = StaticCalculation(torch.tensor([1.0, 0.0, 1.0, 1.0]))
+    unit_to_group = create_pipeline_calculation(
+        _unit_to_group_plan(torch.tensor([1.0, 0.0, 1.0, 1.0]))
+    )
+    l2_norm_pr_unit = ParameterCalculation(torch.tensor([5.0, 7.0, 11.0, 13.0]))
     regularizer = GroupLasso(
-        active_params_pr_unit=StaticCalculation(torch.tensor([2.0, 3.0])),
-        l2_norm_pr_unit=l2_norm_pr_unit,
+        {
+            CalcType.L2_NORM_PR_UNIT: l2_norm_pr_unit,
+            CalcType.UNITS_TO_GROUP: unit_to_group,
+            CalcType.UNIT_ACTIVE_MASK: unit_active_mask,
+            CalcType.BASELINE_GROUP_SIZES: StaticCalculation(torch.tensor([2.0, 2.0])),
+            CalcType.GROUP_CHANGE_EFFECT: StaticCalculation(torch.tensor([10.0, 4.0])),
+            CalcType.GROUP_SIZES: StaticCalculation(torch.tensor([2, 2])),
+        }
     )
 
     loss = regularizer()
     loss.backward()
 
-    torch.testing.assert_close(loss.detach(), torch.tensor(31.0))
-    torch.testing.assert_close(l2_norm_pr_unit.value.grad, torch.tensor([2.0, 3.0]))
+    torch.testing.assert_close(loss.detach(), torch.tensor(-120.0))
+    torch.testing.assert_close(
+        l2_norm_pr_unit.value.grad,
+        torch.tensor([-10.0, -10.0, 0.0, 0.0]),
+    )
 
 
 def test_group_lasso_requires_explicit_calculations() -> None:
-    with pytest.raises(ValueError, match="active_params_pr_unit"):
-        GroupLasso()
+    with pytest.raises(ValueError, match="missing required calculations"):
+        GroupLasso({})
+
+
+def test_structured_bops_requires_explicit_calculations() -> None:
+    with pytest.raises(ValueError, match="missing required calculations"):
+        StructuredBOPs({})

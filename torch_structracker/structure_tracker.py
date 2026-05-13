@@ -1,14 +1,14 @@
 import torch.nn as nn
 
+import torch_structracker.calculations.calculations as calculation_impl
 from torch_structracker.calculations import (
     CalcType,
-    create_calculation,
+    CachedCalculation,
+    CalculationContext,
 )
 
 from torch_structracker.canonical_units import CanonicalUnitGroup, canonicalize_groups
-from torch_structracker.operations import WeightOperationType
-from torch_structracker.plans.bitrate_plan import create_codeq_bitrates
-from torch_structracker.plans.unit_weight_operation_plan import create_group_member_plan
+from torch_structracker.extractors.codeq_bitrate_extractor import ModuleBitrateExtractor
 from torch_structracker.regularizers import (
     RegularizerType,
     regularizer_class_for_type,
@@ -81,6 +81,9 @@ class StructureTracker:
             )
 
         self.calculations = {}
+        self._weighted_module_entries = None
+        self._weighted_modules = None
+        self._weighted_module_index = None
         self.regularizers = []
         self.trackers = []
 
@@ -155,35 +158,64 @@ class StructureTracker:
 
     def get_calculation(self, calculation_type: CalcType):
         calculation_type = CalcType(calculation_type)
+        return self._get_calculation(calculation_type, stack=())
 
+    def _get_calculation(
+        self,
+        calculation_type: CalcType,
+        *,
+        stack: tuple[CalcType, ...],
+    ):
         if calculation_type not in self.calculations:
             self.calculations[calculation_type] = self._create_calculation(
-                calculation_type
+                calculation_type,
+                stack=stack,
             )
 
         return self.calculations[calculation_type]
 
-    def _create_calculation(self, type: CalcType):
+    def _create_calculation(
+        self,
+        calculation_type: CalcType,
+        *,
+        stack: tuple[CalcType, ...],
+    ):
+        if calculation_type in stack:
+            cycle = (*stack, calculation_type)
+            names = " -> ".join(item.value for item in cycle)
+            raise ValueError(f"Circular calculation dependency detected: {names}")
 
-        match type:
-            case CalcType.UNITS_TO_MODULE:
-                #  plan
-            case 
-                CalcType.L2_NORM_PR_UNIT,
-                CalcType.UNITS_TO_GROUP,
-                CalcType.UNIT_ACTIVE_MASK,
-                CalcType.BASELINE_GROUP_SIZES,
-                CalcType.GROUP_CHANGE_EFFECT,
-                CalcType.GROUP_SIZES,
-       
+        try:
+            spec = calculation_impl.CALCULATION_SPECS[calculation_type]
+        except KeyError as error:
+            raise ValueError(
+                f"Unknown calculation type: {calculation_type.value}"
+            ) from error
 
+        if spec.requires_groups:
+            self._require_groups(calculation_type)
+
+        next_stack = (*stack, calculation_type)
+        dependencies = {
+            dependency: self._get_calculation(dependency, stack=next_stack)
+            for dependency in spec.required_calculations
+        }
+        calculation = spec.create(self._calculation_context(), dependencies)
+
+        if spec.cache_constant:
+            cached = CachedCalculation(calculation)
+            cached.refresh_cache()
+            return cached
+
+        return calculation
 
 
     def ensure_calculations(self, calculation_types):
-        return {
-            calculation_type: self.get_calculation(calculation_type)
-            for calculation_type in calculation_types
-        }
+        calculations = {}
+        for calculation_type in calculation_types:
+            calculation_type = CalcType(calculation_type)
+            calculations[calculation_type] = self.get_calculation(calculation_type)
+        return calculations
 
     def create_tracker(self, tracker_type: TrackerType):
         tracker_type = TrackerType(tracker_type)
@@ -208,11 +240,43 @@ class StructureTracker:
         return metrics
 
     def _require_groups(self, calculation_type: CalcType) -> None:
-        if len(self.groups) == 0:
+        if len(self.canonical_groups) == 0:
             raise ValueError(
                 f"{calculation_type.value} requires dependency groups. Pass groups "
                 "when constructing StructTracker."
             )
+
+    def _calculation_context(self) -> CalculationContext:
+        return CalculationContext(
+            model=self.model,
+            canonical_groups=tuple(self.canonical_groups),
+            device=self.device,
+            dtype=self.dtype,
+            weighted_modules=self._get_weighted_modules(),
+            weighted_module_index=self._get_weighted_module_index(),
+        )
+
+    def _get_weighted_module_entries(self):
+        if self._weighted_module_entries is None:
+            self._weighted_module_entries = tuple(
+                ModuleBitrateExtractor.weighted_modules(self.model)
+            )
+        return self._weighted_module_entries
+
+    def _get_weighted_modules(self):
+        if self._weighted_modules is None:
+            self._weighted_modules = tuple(
+                module for _, module in self._get_weighted_module_entries()
+            )
+        return self._weighted_modules
+
+    def _get_weighted_module_index(self):
+        if self._weighted_module_index is None:
+            self._weighted_module_index = {
+                module: index
+                for index, module in enumerate(self._get_weighted_modules())
+            }
+        return self._weighted_module_index
 
 
 def _expanded_ignored_layers(ignored_layers):

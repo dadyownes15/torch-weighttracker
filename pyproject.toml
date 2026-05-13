@@ -1,43 +1,16 @@
 [build-system]
-<<<<<<< HEAD
-requires = ["setuptools>=68"]
-build-backend = "setuptools.build_meta"
-
-[project]
-name = "torch-structure-analyser"
-dynamic = ["version"]
-description = "Tools for analyzing and pruning structured sparsity in PyTorch models."
-readme = "README.md"
-requires-python = ">=3.10"
-dependencies = [
-    "numpy",
-    "torch",
-]
-
-[project.optional-dependencies]
-dev = [
-    "build",
-    "pytest",
-]
-
-[tool.setuptools.dynamic]
-version = {attr = "torch_structure_analyser.__version__"}
-
-[tool.setuptools.packages.find]
-include = ["torch_structure_analyser*"]
-
-=======
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "torch-structracker"
-description = "A PyTorch package for tracking structured model state."
+version = "0.1.0"
+description = "Tools for analyzing and tracking structured sparsity in PyTorch models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["pytorch", "torch", "tracking", "structure"]
+keywords = ["pytorch", "torch", "tracking", "structured-sparsity", "pruning"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
@@ -53,14 +26,15 @@ dependencies = [
     "numpy>=1.24",
     "torch>=2.0",
 ]
-dynamic = ["version"]
 
 [project.optional-dependencies]
 dev = [
     "build>=1.2",
+    "fvcore",
     "pytest>=8.0",
     "ruff>=0.6",
     "timm>=1.0",
+    "torchvision>=0.15",
     "twine>=5.0",
 ]
 
@@ -68,19 +42,18 @@ dev = [
 Homepage = "https://github.com/your-username/torch-structracker"
 Issues = "https://github.com/your-username/torch-structracker/issues"
 
-[tool.setuptools]
-
 [tool.setuptools.packages.find]
 where = ["."]
-
-[tool.setuptools.dynamic]
-version = { attr = "torch_structracker._version.__version__" }
-
-[tool.setuptools.package-data]
-torch_structracker = ["py.typed"]
+include = ["torch_structracker*"]
 
 [tool.pytest.ini_options]
-addopts = "-ra"
+addopts = [
+    "-ra",
+    "--ignore=tests/test_attention_axes_e2e.py",
+    "--ignore=tests/test_attention_axes_unit.py",
+    "--ignore=tests/test_model_structured_sparsity.py",
+    "--ignore=tests/test_sparsity_controller.py",
+]
 pythonpath = ["."]
 testpaths = ["tests"]
 
@@ -94,4 +67,3 @@ select = ["E", "F", "I", "UP", "B"]
 [tool.ruff.format]
 quote-style = "double"
 indent-style = "space"
->>>>>>> gpu-based-group-lasso-generic

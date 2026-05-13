@@ -63,7 +63,7 @@ class ModuleBitrateExtractor(ElementTensorExtractor[nn.Module]):
         if not isinstance(element, nn.Module):
             raise TypeError(f"Expected nn.Module, got {type(element).__name__}")
 
-        weight = getattr(element, "weight", None)
+        weight = self._weight_tensor_for(element)
         if not isinstance(weight, torch.Tensor):
             return None
 
@@ -188,16 +188,33 @@ class ModuleBitrateExtractor(ElementTensorExtractor[nn.Module]):
         if self.device is not None:
             return torch.device(self.device)
 
-        weight = getattr(module, "weight", None)
+        weight = self._weight_tensor_for(module)
         if isinstance(weight, torch.Tensor):
             return weight.device
 
         return torch.device("cpu")
 
     @staticmethod
+    def _weight_tensor_for(module: nn.Module):
+        weight = getattr(module, "weight", None)
+        if isinstance(weight, torch.Tensor):
+            return weight
+
+        if isinstance(module, nn.MultiheadAttention):
+            in_proj_weight = getattr(module, "in_proj_weight", None)
+            if isinstance(in_proj_weight, torch.Tensor):
+                return in_proj_weight
+
+            q_proj_weight = getattr(module, "q_proj_weight", None)
+            if isinstance(q_proj_weight, torch.Tensor):
+                return q_proj_weight
+
+        return None
+
+    @staticmethod
     def weighted_modules(model: nn.Module):
         for name, module in model.named_modules():
-            weight = getattr(module, "weight", None)
+            weight = ModuleBitrateExtractor._weight_tensor_for(module)
             if not isinstance(weight, torch.Tensor):
                 continue
 

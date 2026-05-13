@@ -1,4 +1,4 @@
-from torch_structracker.calculations import CalculationType
+from torch_structracker.calculations import CalcType
 from torch_structracker.regularizers.base import BaseRegularizer, RegularizerType
 
 

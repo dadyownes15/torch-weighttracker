@@ -13,6 +13,7 @@ class WeightOperationType(str, Enum):
     SUM = "sum"
     MEAN = "mean"
     COUNT = "count"
+    ACTIVE = "active"
     L1 = "l1"
     L2 = "l2"
 

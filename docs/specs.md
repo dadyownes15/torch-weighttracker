@@ -270,10 +270,7 @@ class TensorReduction(Protocol):
     def __call__(self, value: TensorValue) -> torch.Tensor:
         ...
 
-    def output_shape(self, source_spec: SourceSpec) -> torch.Size:
-        ...
-
-    def output_dtype(self, source_spec: SourceSpec) -> torch.dtype:
+    def output_spec(self, source_spec: SourceSpec) -> TensorSpec:
         ...
 
     def identity_key(self) -> Hashable:
@@ -313,10 +310,104 @@ def reduction_for_type(
 
 The factory is not in the calculation hot path.
 
+The factory also does not compute output metadata. It only chooses a concrete
+reduction object and captures static configuration such as `dim` and `keepdim`.
+The output metadata is computed later, after an extractor has bound an element
+to a `TensorSourceRef` and `ReductionOp` has access to the source spec.
+
+For generic single-tensor reductions, factor shared metadata rules into helpers:
+
+```python
+def single_tensor_spec(source_spec: SourceSpec) -> TensorSpec:
+    if isinstance(source_spec, tuple):
+        raise TypeError("This reduction expects one tensor source.")
+    return source_spec
+
+
+def reduced_shape(
+    shape: torch.Size,
+    dim=None,
+    keepdim: bool = False,
+) -> torch.Size:
+    if dim is None:
+        return torch.Size([1] * len(shape)) if keepdim else torch.Size([])
+
+    dims = (dim,) if isinstance(dim, int) else tuple(dim)
+    rank = len(shape)
+    normalized = tuple(sorted(d + rank if d < 0 else d for d in dims))
+
+    if any(d < 0 or d >= rank for d in normalized):
+        raise IndexError(f"Reduction dim out of range for shape {tuple(shape)}.")
+
+    if len(set(normalized)) != len(normalized):
+        raise ValueError(f"Duplicate reduction dims: {dims!r}.")
+
+    if keepdim:
+        out = list(shape)
+        for d in normalized:
+            out[d] = 1
+        return torch.Size(out)
+
+    return torch.Size(size for i, size in enumerate(shape) if i not in normalized)
+```
+
+Then a concrete reduction owns both runtime execution and output metadata:
+
+```python
+class SumDim:
+    def __init__(self, dim=None, keepdim: bool = False) -> None:
+        self.dim = dim
+        self.keepdim = keepdim
+
+    def __call__(self, value: TensorValue) -> torch.Tensor:
+        if isinstance(value, tuple):
+            raise TypeError("SumDim expects one tensor source.")
+        return value.sum(dim=self.dim, keepdim=self.keepdim)
+
+    def output_spec(self, source_spec: SourceSpec) -> TensorSpec:
+        spec = single_tensor_spec(source_spec)
+        return TensorSpec(
+            shape=reduced_shape(spec.shape, dim=self.dim, keepdim=self.keepdim),
+            dtype=spec.dtype,
+            device=spec.device,
+        )
+
+    def identity_key(self) -> Hashable:
+        return (type(self), self.dim, self.keepdim)
+```
+
+`L1Dim` and `L2Dim` can share the same output metadata logic while differing in
+`__call__`. Tuple-source reductions such as fused/separate QKV reductions should
+implement their own `output_spec()` because their source metadata and output
+layout are reduction-specific.
+
+If a mapped plan needs flattened outputs, flattening should be an explicit
+reduction or reduction adapter, not hidden inside `ReductionOp`:
+
+```python
+class FlattenedReduction:
+    def __init__(self, inner: TensorReduction) -> None:
+        self.inner = inner
+
+    def __call__(self, value: TensorValue) -> torch.Tensor:
+        return self.inner(value).reshape(-1)
+
+    def output_spec(self, source_spec: SourceSpec) -> TensorSpec:
+        inner_spec = self.inner.output_spec(source_spec)
+        return TensorSpec(
+            shape=torch.Size([numel(inner_spec.shape)]),
+            dtype=inner_spec.dtype,
+            device=inner_spec.device,
+        )
+
+    def identity_key(self) -> Hashable:
+        return ("flattened", self.inner.identity_key())
+```
+
 ## Reduction Operation
 
 `ReductionOp` combines a source ref and one concrete reduction. It exposes
-shape metadata without executing the reduction.
+output metadata without executing the reduction.
 
 ```python
 class ReductionOp(nn.Module):
@@ -330,12 +421,12 @@ class ReductionOp(nn.Module):
         self.reduction = reduction
 
         self._source_spec = source_ref.source_spec()
-        self._output_spec = TensorSpec(
-            shape=reduction.output_shape(self._source_spec),
-            dtype=reduction.output_dtype(self._source_spec),
-            device=common_source_device(self._source_spec),
-        )
+        self._output_spec = reduction.output_spec(self._source_spec)
         self._output_length = numel(self._output_spec.shape)
+
+    @property
+    def source_spec(self) -> SourceSpec:
+        return self._source_spec
 
     @property
     def output_spec(self) -> TensorSpec:
@@ -356,21 +447,7 @@ class ReductionOp(nn.Module):
         )
 
     def forward(self) -> torch.Tensor:
-        return self.reduction(self.source_ref.get()).reshape(-1)
-
-
-def common_source_device(source_spec: SourceSpec) -> torch.device:
-    if isinstance(source_spec, TensorSpec):
-        return source_spec.device
-
-    if len(source_spec) == 0:
-        raise ValueError("Tuple source spec must not be empty.")
-
-    device = source_spec[0].device
-    if any(spec.device != device for spec in source_spec):
-        raise ValueError("Tuple source tensors must live on the same device.")
-
-    return device
+        return self.reduction(self.source_ref.get())
 
 
 def numel(shape: torch.Size) -> int:
@@ -383,25 +460,38 @@ def numel(shape: torch.Size) -> int:
 Planning and validation must use `op.output_spec` and `op.output_length`; they
 must not call `op()`.
 
-## Targets And Records
+## Selections, Mappings, And Records
 
 ```python
 @dataclass(frozen=True)
-class SegmentTarget:
+class FullSelection:
+    pass
+
+
+@dataclass(frozen=True)
+class SegmentSelection:
     start: int
     length: int
 
 
 @dataclass(frozen=True)
-class IndexedTarget:
-    destination_indices: tuple[int, ...]
+class IndexSelection:
+    indices: tuple[int, ...]
+
+
+Selection = FullSelection | SegmentSelection | IndexSelection
+
+
+@dataclass(frozen=True)
+class ReductionMapping:
+    source: Selection
+    target: Selection
 
 
 @dataclass(frozen=True)
 class ReductionRecord:
     op: ReductionOp
-    target: SegmentTarget | IndexedTarget
-    source_indices: tuple[int, ...] | None = None
+    mapping: ReductionMapping
 
 
 @dataclass(frozen=True)
@@ -434,12 +524,25 @@ class MappedReductionPlan:
     output_labels: tuple[str, ...] | None = None
 ```
 
-`source_indices` is an optional gather from `op()` before writing to the output.
+`ReductionMapping` is the planning API. It describes which values from an op
+output are written to which plan output positions. Single-index selections use
+`IndexSelection((index,))`. A singleton indexed target can also be used as an
+accumulation sink for a longer source selection; the builder lowers it by
+repeating that destination index for every selected source value.
+
 The builder lowers records into one of three execution buckets:
 
 - segment: contiguous full write
 - indexed: full output written to arbitrary destination indices
 - indexed-gather: selected source indices written to arbitrary destinations
+
+Mapped plans use a one-dimensional accumulator and their targets address flat
+output positions. Therefore any reduction used with segment, indexed, or
+indexed-gather writes must produce the one-dimensional representation the mapper
+expects. If a natural reduction produces a scalar, matrix, or other structured
+tensor, planning must select a concrete reduction or adapter that returns the
+intended flat representation. `ReductionOp` must not flatten or reshape
+implicitly.
 
 The builder should derive `plan.output_spec` from the operation specs unless an
 explicit output spec is provided. By default, all operation output specs in one
@@ -448,7 +551,7 @@ an explicit feature rather than accidental behavior.
 
 ## Reduction Rule
 
-The generic rule owns operation construction and target mapping.
+The generic rule owns operation construction and mapping selection.
 
 ```python
 class ReductionRule(Protocol[Element]):
@@ -461,7 +564,7 @@ class ReductionRule(Protocol[Element]):
 ```
 
 A reusable rule can be implemented by composing a typed extractor, reduction
-factory, and target mapper:
+factory, and mapping strategy:
 
 ```python
 class ElementReductionRule(Generic[Element]):
@@ -470,15 +573,17 @@ class ElementReductionRule(Generic[Element]):
         *,
         extractor: ElementTensorExtractor[Element],
         operation_type: WeightOperationType | str,
-        target_mapper: TargetMapper[Element],
+        mapping_strategy: MappingStrategy[Element],
         dim=None,
         keepdim: bool = False,
+        flatten_output: bool = True,
     ) -> None:
         self.extractor = extractor
         self.operation_type = WeightOperationType(operation_type)
-        self.target_mapper = target_mapper
+        self.mapping_strategy = mapping_strategy
         self.dim = dim
         self.keepdim = keepdim
+        self.flatten_output = flatten_output
 
     def emit(
         self,
@@ -494,13 +599,15 @@ class ElementReductionRule(Generic[Element]):
             dim=self.dim,
             keepdim=self.keepdim,
         )
+        if self.flatten_output:
+            reduction = FlattenedReduction(reduction)
+
         op = ReductionOp(source_ref, reduction)
-        target, source_indices = self.target_mapper.map(element, op, builder)
+        mapping = self.mapping_strategy.map(element, op, builder)
 
         yield ReductionRecord(
             op=op,
-            target=target,
-            source_indices=source_indices,
+            mapping=mapping,
         )
 ```
 
@@ -508,53 +615,59 @@ The rule does not know how to read a module parameter. The extractor does that.
 The rule does not know how to execute `sum` or `l2`. The concrete reduction
 does that. The rule only wires the element-specific pieces into a plan record.
 
-## Target Mapper
+## Mapping Strategy
 
-Target mapping should also be typed by element.
+Mapping selection should also be typed by element.
 
 ```python
-class TargetMapper(Protocol[Element]):
+class MappingStrategy(Protocol[Element]):
     def map(
         self,
         element: Element,
         op: ReductionOp,
         builder: ReductionPlanBuilder,
-    ) -> tuple[SegmentTarget | IndexedTarget, tuple[int, ...] | None]:
+    ) -> ReductionMapping:
         ...
 ```
 
 Examples:
 
 ```python
-class SequentialSegmentMapper(TargetMapper[Element]):
+class SequentialSegmentMapper(MappingStrategy[Element]):
     def map(
         self,
         element: Element,
         op: ReductionOp,
         builder: ReductionPlanBuilder,
-    ) -> tuple[SegmentTarget, None]:
-        return builder.reserve_segment(op.output_length), None
+    ) -> ReductionMapping:
+        return ReductionMapping(
+            source=FullSelection(),
+            target=builder.reserve_segment(op.output_length),
+        )
 ```
 
 ```python
-class MemberUnitMapper(TargetMapper[MemberContext]):
+class MemberUnitMapper(MappingStrategy[MemberContext]):
     def map(
         self,
         element: MemberContext,
         op: ReductionOp,
         builder: ReductionPlanBuilder,
-    ) -> tuple[SegmentTarget | IndexedTarget, tuple[int, ...] | None]:
+    ) -> ReductionMapping:
         if op.output_length == element.group_length:
-            return (
-                SegmentTarget(
+            return ReductionMapping(
+                source=FullSelection(),
+                target=SegmentSelection(
                     start=element.group_offset,
                     length=op.output_length,
                 ),
-                None,
             )
 
         if op.output_length == len(element.unit_indices):
-            return IndexedTarget(element.unit_indices), None
+            return ReductionMapping(
+                source=FullSelection(),
+                target=IndexSelection(element.unit_indices),
+            )
 
         source_indices = source_indices_for_member(element, op)
         if len(source_indices) != len(element.unit_indices):
@@ -562,7 +675,10 @@ class MemberUnitMapper(TargetMapper[MemberContext]):
                 "Member source and destination mapping lengths must match."
             )
 
-        return IndexedTarget(element.unit_indices), source_indices
+        return ReductionMapping(
+            source=IndexSelection(source_indices),
+            target=IndexSelection(element.unit_indices),
+        )
 ```
 
 The exact member mapping logic may differ, but it belongs in a mapper or
@@ -604,6 +720,7 @@ Required checks:
 
 - `plan.output_length >= 0`
 - `plan.output_spec.shape == torch.Size([plan.output_length])`
+- every mapped entry's `op.output_spec.shape == torch.Size([op.output_length])`
 - segment entries stay inside `[0, output_length)`
 - `segment.length == segment.op.output_length`
 - indexed destination length equals `indexed.op.output_length`
@@ -631,9 +748,9 @@ self.register_buffer(
 )
 ```
 
-If output dtype should differ from source dtype, the reduction should expose
-that through `output_dtype()`, and the builder should reflect it in
-`plan.output_spec`.
+If output dtype, device, shape, or layout should differ from the source, the
+reduction should expose that through `output_spec()`, and the builder should
+reflect it in `plan.output_spec`.
 
 ## Examples
 
@@ -646,7 +763,7 @@ plan = planner.compile(
     ElementReductionRule[nn.Module](
         extractor=ModuleWeightExtractor(),
         operation_type=WeightOperationType.SUM,
-        target_mapper=SequentialSegmentMapper(),
+        mapping_strategy=SequentialSegmentMapper(),
         dim=None,
     )
 )
@@ -664,7 +781,7 @@ plan = planner.compile(
     ElementReductionRule[tuple[str, nn.Module]](
         extractor=NamedModuleWeightExtractor(),
         operation_type=WeightOperationType.SUM,
-        target_mapper=SequentialSegmentMapper(),
+        mapping_strategy=SequentialSegmentMapper(),
         dim=None,
     )
 )
@@ -687,7 +804,7 @@ plan = planner.compile(
     ElementReductionRule[MemberContext](
         extractor=MemberWeightExtractor(),
         operation_type=WeightOperationType.SUM,
-        target_mapper=MemberUnitMapper(),
+        mapping_strategy=MemberUnitMapper(),
         dim=member_reduction_dim,
     )
 )
@@ -700,7 +817,7 @@ plan = planner.compile(
     ElementReductionRule[MemberContext](
         extractor=MemberQKVExtractor(),
         operation_type=WeightOperationType.L2,
-        target_mapper=MemberUnitMapper(),
+        mapping_strategy=MemberUnitMapper(),
         dim=None,
     )
 )
@@ -716,7 +833,7 @@ plan = GenericReductionPlanner(module.parametrizations.weight).compile(
     ElementReductionRule[nn.Module](
         extractor=ParametrizationTensorExtractor(),
         operation_type=WeightOperationType.L1,
-        target_mapper=SequentialSegmentMapper(),
+        mapping_strategy=SequentialSegmentMapper(),
     )
 )
 ```
@@ -739,7 +856,7 @@ changed.
    source tensors or executing operations.
 6. Change plan compilation and validation to use `op.output_length`, never
    `op().numel()`.
-7. Keep structural logic in context producers and target mappers.
+7. Keep structural logic in context producers and mapping strategies.
 8. Keep calculations limited to buffer allocation, index buffer registration,
    and execution of segment/indexed/indexed-gather entries.
 
@@ -759,8 +876,8 @@ elements: Iterable[Element]
     -> TensorSourceRef
     -> TensorReduction selected from operation_type
     -> ReductionOp(source_ref, reduction)
-    -> TargetMapper[Element].map(element, op, builder)
-    -> ReductionRecord(op, target, source_indices)
+    -> MappingStrategy[Element].map(element, op, builder)
+    -> ReductionRecord(op, ReductionMapping(source, target))
     -> ReductionPlanBuilder.add(record)
     -> MappedReductionPlan
     -> MappedReductionCalculation.forward()

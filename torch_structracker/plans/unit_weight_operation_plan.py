@@ -1,0 +1,234 @@
+from __future__ import annotations
+
+from typing import Iterable, cast
+
+import torch
+import torch.nn as nn
+
+from torch_structracker.canonical_units import (
+    CanonicalMember,
+    CanonicalUnitGroup,
+    SourceLayout,
+    UnitAxis,
+    canonical_members,
+    member_local_indices,
+    member_root_indices,
+)
+from torch_structracker.extractors.extractor import (
+    ElementTensorExtractor,
+    ModuleParameterRef,
+    ModuleParameterTupleRef,
+    TensorSourceRef,
+)
+from torch_structracker.operations import QKVSemanticOperation, WeightOperationType
+from torch_structracker.operations.resolver import operation_for_member
+from torch_structracker.reductions.builder import (
+    FullSelection,
+    IndexSelection,
+    MappedReductionPlan,
+    ReductionMapping,
+    ReductionPlanBuilder,
+    SegmentSelection,
+)
+from torch_structracker.reductions.compiler import (
+    GenericReductionPlanner,
+    MappingStrategy,
+)
+from torch_structracker.reductions.helpers import ElementReductionRule
+from torch_structracker.reductions.ops import ReductionOp, TensorReduction
+
+
+MemberContext = CanonicalMember
+
+
+class CanonicalMemberTensorExtractor(ElementTensorExtractor[CanonicalMember]):
+    def bind(self, element: CanonicalMember) -> TensorSourceRef | None:
+        if element.source_layout == SourceLayout.PLAIN:
+            return _bind_module_parameter(element.module, "weight")
+
+        if element.source_layout == SourceLayout.FUSED_QKV:
+            if isinstance(element.module, nn.MultiheadAttention):
+                return _bind_module_parameter(element.module, "in_proj_weight")
+            return _bind_module_parameter(element.module, "weight")
+
+        if element.source_layout == SourceLayout.SEPARATE_QKV:
+            refs = (
+                _bind_module_parameter(element.module, "q_proj_weight"),
+                _bind_module_parameter(element.module, "k_proj_weight"),
+                _bind_module_parameter(element.module, "v_proj_weight"),
+            )
+            if any(ref is None for ref in refs):
+                return None
+            return ModuleParameterTupleRef(refs)  # type: ignore[arg-type]
+
+        raise ValueError(f"Unsupported source layout: {element.source_layout}")
+
+
+MemberWeightExtractor = CanonicalMemberTensorExtractor
+
+
+class UnitWeightReductionMapper:
+    def __init__(self, operation_type: WeightOperationType | str) -> None:
+        self.operation_type = WeightOperationType(operation_type)
+
+    def __call__(self, element: CanonicalMember) -> TensorReduction:
+        if element.source_layout in {
+            SourceLayout.FUSED_QKV,
+            SourceLayout.SEPARATE_QKV,
+        }:
+            return self._qkv_reduction(element)
+
+        return operation_for_member(element.member, self.operation_type)
+
+    def _qkv_reduction(self, element: CanonicalMember) -> TensorReduction:
+        if element.embed_dim is None:
+            raise ValueError("QKV reductions require embed_dim.")
+
+        if element.unit_axis == UnitAxis.QKV_CHANNEL:
+            mode = "channel"
+            num_heads = None
+        elif element.unit_axis == UnitAxis.QKV_HEAD:
+            mode = "head"
+            num_heads = element.num_heads
+        elif element.unit_axis == UnitAxis.QKV_HEAD_DIM:
+            mode = "head_dim"
+            num_heads = element.num_heads
+        else:
+            raise ValueError(f"Unsupported QKV unit axis: {element.unit_axis}")
+
+        return QKVSemanticOperation(
+            operation_type=self.operation_type,
+            embed_dim=element.embed_dim,
+            num_heads=num_heads,
+            mode=mode,
+        )
+
+
+class MemberUnitMapper(MappingStrategy[CanonicalMember]):
+    def map(
+        self,
+        element: CanonicalMember,
+        op: ReductionOp,
+        builder: ReductionPlanBuilder,
+    ) -> ReductionMapping:
+        target = element.destination
+
+        if isinstance(target, SegmentSelection):
+            if op.output_length == target.length:
+                return ReductionMapping(source=FullSelection(), target=target)
+            source_indices = source_indices_for_member(element, op)
+            return ReductionMapping(
+                source=IndexSelection(source_indices),
+                target=target,
+            )
+
+        destination_indices = tuple(int(index) for index in target.indices)
+        if op.output_length == len(destination_indices):
+            return ReductionMapping(source=FullSelection(), target=target)
+
+        source_indices = source_indices_for_member(element, op)
+        if len(source_indices) != len(destination_indices):
+            raise ValueError(
+                "Member source and destination mapping lengths must match."
+            )
+
+        return ReductionMapping(
+            source=IndexSelection(source_indices),
+            target=IndexSelection(destination_indices),
+        )
+
+
+def create_group_member_plan(
+    groups: Iterable[CanonicalUnitGroup],
+    operation_type: WeightOperationType | str,
+) -> MappedReductionPlan:
+    canonical_groups = tuple(groups)
+    elements = canonical_members(canonical_groups)
+    output_length = sum(group.length for group in canonical_groups)
+
+    planner = GenericReductionPlanner[CanonicalMember](
+        elements=elements,
+        output_length=output_length,
+    )
+    compiled = planner.compile(
+        ElementReductionRule[CanonicalMember](
+            extractor=CanonicalMemberTensorExtractor(),
+            reduction_mapper=UnitWeightReductionMapper(operation_type),
+            mapping_strategy=MemberUnitMapper(),
+        )
+    )
+
+    return cast(MappedReductionPlan, compiled)
+
+
+def create_active_units_plan(
+    groups: Iterable[CanonicalUnitGroup],
+) -> MappedReductionPlan:
+    return create_group_member_plan(groups, WeightOperationType.COUNT)
+
+
+def count_group_units(groups: Iterable[CanonicalUnitGroup]) -> int:
+    return sum(group.length for group in groups)
+
+
+def source_indices_for_member(
+    element: CanonicalMember,
+    op: ReductionOp,
+) -> tuple[int, ...]:
+    if element.source_indices is not None:
+        local_indices = tuple(int(index) for index in element.source_indices)
+    else:
+        local_indices = member_local_indices(element.member)
+
+    if len(local_indices) == 0:
+        return ()
+
+    if min(local_indices) < 0:
+        raise ValueError("Member source indices must be non-negative.")
+
+    if max(local_indices) >= op.output_length:
+        raise ValueError(
+            f"Member source index {max(local_indices)} is outside op output "
+            f"length {op.output_length}."
+        )
+
+    return local_indices
+
+
+def _bind_module_parameter(
+    module: nn.Module,
+    name: str,
+) -> ModuleParameterRef | None:
+    value = getattr(module, name, None)
+    if not isinstance(value, torch.Tensor):
+        return None
+    return ModuleParameterRef(module, name)
+
+
+def group_items(group):
+    return group.items if hasattr(group, "items") else group
+
+
+def destination_indices_for_member(
+    member,
+    *,
+    group_offset: int,
+    root_to_position: dict[int, int],
+) -> tuple[int, ...]:
+    destinations: list[int] = []
+    for root_index in member_root_indices(member):
+        try:
+            position = root_to_position[int(root_index)]
+        except KeyError as error:
+            raise ValueError(
+                f"Root index {root_index} is not present in the dependency group root."
+            ) from error
+        destinations.append(int(group_offset) + position)
+    return tuple(destinations)
+
+
+def has_live_parameter(module: nn.Module, parameter_name: str) -> bool:
+    return (
+        hasattr(module, parameter_name)
+        and getattr(module, parameter_name) is not None
+    )

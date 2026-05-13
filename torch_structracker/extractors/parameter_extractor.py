@@ -1,21 +1,11 @@
-from typing import Hashable, Protocol, TypeAlias
+from __future__ import annotations
+
+from typing import Hashable
 
 import torch
 import torch.nn as nn
 
-
-TensorValue: TypeAlias = torch.Tensor | tuple[torch.Tensor, ...]
-
-
-class TensorExtractor(Protocol):
-    def get(self) -> TensorValue:
-        ...
-
-    def identity_key(self) -> Hashable:
-        ...
-    def output_shape(self) -> torch.Size:
-        ...
-
+from torch_structracker.extractors.extractor import TensorExtractor
 
 
 class ParameterExtractor(TensorExtractor):
@@ -75,11 +65,11 @@ class ParameterTupleExtractor(TensorExtractor):
         return tuple(extractor.identity_key() for extractor in self.extractors)
 
 
-class FusedQKVExtractor(ParameterExtractor):
-    """Extractor for packed QKV tensors such as in_proj_weight or qkv.weight."""
+# class FusedQKVExtractor(ParameterExtractor):
+#     """Extractor for packed QKV tensors such as in_proj_weight or qkv.weight."""
 
-    def identity_key(self):
-        return ("fused_qkv", *super().identity_key())
+#     def identity_key(self):
+#         return ("fused_qkv", *super().identity_key())
 
 
 class SeparateQKVExtractor(TensorExtractor):
@@ -96,7 +86,7 @@ class SeparateQKVExtractor(TensorExtractor):
         self.q_extractor = ParameterExtractor(module, q_name)
         self.k_extractor = ParameterExtractor(module, k_name)
         self.v_extractor = ParameterExtractor(module, v_name)
-        
+
     def get(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         return (
             self.q_extractor.get(),

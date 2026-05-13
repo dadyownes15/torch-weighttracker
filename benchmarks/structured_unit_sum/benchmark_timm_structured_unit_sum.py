@@ -47,7 +47,7 @@ except ImportError as exc:  # pragma: no cover - exercised only without timm.
         "`pip install timm`."
     ) from exc
 
-from torch_structracker.calculations.structured_unit_sum import StructuredUnitSum
+from torch_structracker.calculations import CalcType, MappedReductionCalculation
 from torch_structracker.operations import WeightOperationType
 from torch_structracker.reducer_plan import (
     ReducerPlan,
@@ -289,7 +289,10 @@ def main() -> None:
         attention_reduction=args.attention_reduction,
     )
 
-    structured = StructuredUnitSum(plan)
+    structured = MappedReductionCalculation(
+        plan,
+        calculation_type=CalcType.STRUCTURED_UNIT_SUM,
+    )
     naive = NaiveStructuredUnitSum(plan)
 
     with torch.inference_mode():

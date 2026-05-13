@@ -295,7 +295,10 @@ def compile_member_unit_sum_plan(
             builder.add(
                 ReductionRecord(
                     op=reducer,
-                    target=IndexedTarget(destination_indices),
+                    mapping=ReductionMapping(
+                        source=FullSelection(),
+                        target=IndexSelection(destination_indices),
+                    ),
                 )
             )
 
@@ -306,6 +309,4 @@ def compile_member_unit_sum_plan(
 
 A major update we need to do is ensure that the builder.finalize, has all the logic for compression and compiling the optimial computing. 
 We also need to ensure that different moduels can rely on the same informatio nacross calcs
-
-
 

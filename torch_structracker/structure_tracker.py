@@ -1,14 +1,20 @@
 import torch.nn as nn
 
 from torch_structracker.calculations import (
-    CalculationType,
+    CalcType,
     create_calculation,
 )
+
+from torch_structracker.canonical_units import CanonicalUnitGroup, canonicalize_groups
+from torch_structracker.operations import WeightOperationType
+from torch_structracker.plans.bitrate_plan import create_codeq_bitrates
+from torch_structracker.plans.unit_weight_operation_plan import create_group_member_plan
 from torch_structracker.regularizers import (
     RegularizerType,
     regularizer_class_for_type,
 )
 from torch_structracker.torch_pruning.dependency import DependencyGraph
+from torch_structracker.torch_pruning.dependency.group import Group
 from torch_structracker.trackers import (
     TrackerType,
     tracker_class_for_type,
@@ -63,6 +69,16 @@ class StructureTracker:
             )
         else:
             self.groups = []
+
+        if all(isinstance(group, CanonicalUnitGroup) for group in self.groups):
+            self.canonical_groups = tuple(self.groups)
+        else:
+            self.canonical_groups = canonicalize_groups(
+                self.groups,
+                num_heads=self.num_heads,
+                prune_dim=self.prune_dim,
+                prune_num_heads=self.prune_num_heads,
+            )
 
         self.calculations = {}
         self.regularizers = []
@@ -132,11 +148,13 @@ class StructureTracker:
         if len(filtered_items) == 0:
             return None
 
-        group._group = filtered_items
-        return group
+        filtered_group = Group()
+        filtered_group._group = list(filtered_items)
+        filtered_group._DG = getattr(group, "_DG", None)
+        return filtered_group
 
-    def get_calculation(self, calculation_type: CalculationType):
-        calculation_type = CalculationType(calculation_type)
+    def get_calculation(self, calculation_type: CalcType):
+        calculation_type = CalcType(calculation_type)
 
         if calculation_type not in self.calculations:
             self.calculations[calculation_type] = self._create_calculation(
@@ -145,20 +163,21 @@ class StructureTracker:
 
         return self.calculations[calculation_type]
 
-    def _create_calculation(self, calculation_type: CalculationType):
-        if calculation_type != CalculationType.BITRATE_PR_MODULE:
-            self._require_groups(calculation_type)
+    def _create_calculation(self, type: CalcType):
 
-        return create_calculation(
-            calculation_type,
-            self.groups,
-            model=self.model,
-            device=self.device,
-            dtype=self.dtype,
-            num_heads=self.num_heads,
-            prune_dim=self.prune_dim,
-            prune_num_heads=self.prune_num_heads,
-        )
+        match type:
+            case CalcType.UNITS_TO_MODULE:
+                #  plan
+            case 
+                CalcType.L2_NORM_PR_UNIT,
+                CalcType.UNITS_TO_GROUP,
+                CalcType.UNIT_ACTIVE_MASK,
+                CalcType.BASELINE_GROUP_SIZES,
+                CalcType.GROUP_CHANGE_EFFECT,
+                CalcType.GROUP_SIZES,
+       
+
+
 
     def ensure_calculations(self, calculation_types):
         return {
@@ -188,7 +207,7 @@ class StructureTracker:
             metrics.update(tracker.track())
         return metrics
 
-    def _require_groups(self, calculation_type: CalculationType) -> None:
+    def _require_groups(self, calculation_type: CalcType) -> None:
         if len(self.groups) == 0:
             raise ValueError(
                 f"{calculation_type.value} requires dependency groups. Pass groups "

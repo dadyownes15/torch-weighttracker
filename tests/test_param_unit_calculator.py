@@ -1,7 +1,10 @@
 import torch
 import torch.nn as nn
 
-from torch_structracker.calculations import StructuredUnitSum
+from torch_structracker.calculations import CalcType, MappedReductionCalculation
+from torch_structracker.canonical_units import canonicalize_groups
+from torch_structracker.operations import WeightOperationType
+from torch_structracker.plans.unit_weight_operation_plan import create_group_member_plan
 from torch_structracker.torch_pruning.dependency import DependencyGraph
 
 
@@ -45,8 +48,15 @@ def test_param_unit_calculator_counts_linear_units_for_tiny_mlp():
         example_inputs=torch.ones(1, 2),
     )
     groups = list(graph.get_all_groups(root_module_types=[nn.Linear]))
+    plan = create_group_member_plan(
+        canonicalize_groups(groups),
+        WeightOperationType.SUM,
+    )
 
-    calculator = StructuredUnitSum.from_groups(groups)
+    calculator = MappedReductionCalculation(
+        plan,
+        calculation_type=CalcType.STRUCTURED_UNIT_SUM,
+    )
 
     assert calculator.output_length == 6
     torch.testing.assert_close(

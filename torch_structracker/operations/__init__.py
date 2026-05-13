@@ -4,6 +4,7 @@ from torch_structracker.operations.base import (
     WeightOperationType,
 )
 from torch_structracker.operations.generic import (
+    ActiveWeight,
     CountWeight,
     L1Weight,
     L2Weight,
@@ -25,6 +26,7 @@ from torch_structracker.operations.resolver import (
 )
 
 __all__ = [
+    "ActiveWeight",
     "CountWeight",
     "L1Weight",
     "L2Weight",

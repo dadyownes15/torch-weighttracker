@@ -1,39 +1,48 @@
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from enum import Enum
 
 import torch
-import torch.nn as nn
+from torch import nn
 
-from torch_structracker.calculations import CalculationType
+from torch_structracker.calculations import CalcType
 
 
-class RegularizerType(str, Enum):
+class RegularizerType(Enum):
     GROUP_LASSO = "group_lasso"
-    GROUP_LASSO_WITH_BITRATE = "group_lasso_with_bitrate"
 
 
 class BaseRegularizer(nn.Module, ABC):
     regularizer_type: RegularizerType
-    required_calculations: tuple[CalculationType, ...] = ()
+    required_calculations: tuple[CalcType, ...] = ()
 
-    def __init__(self, calculations=None) -> None:
+    def __init__(
+        self,
+        calculations: Mapping[CalcType, nn.Module],
+    ) -> None:
         super().__init__()
-        self.calculations = {} if calculations is None else calculations
+
+        missing = [
+            calc_type
+            for calc_type in self.required_calculations
+            if calc_type not in calculations
+        ]
+
+        if missing:
+            raise ValueError(
+                f"{self.__class__.__name__} is missing required calculations: {missing}"
+            )
+
+        self.calculations = nn.ModuleDict(
+            {calc_type.name: module for calc_type, module in calculations.items()}
+        )
 
     @abstractmethod
     def forward(self) -> torch.Tensor:
         raise NotImplementedError
 
-
-def regularizer_class_for_type(regularizer_type: RegularizerType):
-    from torch_structracker.regularizers.group_lasso import GroupLasso
-    from torch_structracker.regularizers.group_lasso_with_bitrate import (
-        GroupLassoWithBitrate,
-    )
-
-    regularizer_type = RegularizerType(regularizer_type)
-    regularizer_classes = {
-        RegularizerType.GROUP_LASSO: GroupLasso,
-        RegularizerType.GROUP_LASSO_WITH_BITRATE: GroupLassoWithBitrate,
-    }
-    return regularizer_classes[regularizer_type]
+    def calc(self, calc_type: CalcType) -> nn.Module:
+        return self.calculations[calc_type.name]
+    
+    def compute(self, calc_type: CalcType, *args, **kwargs) -> torch.Tensor:
+        return self.calc(calc_type)(*args, **kwargs)

@@ -10,6 +10,8 @@ from torch_structracker.operations.norm import (
     operation_for_layernorm,
 )
 
+# TODO:
+# We can replace the imports from torch pruning and the logic that uses the handler, by creating a maping that uses the canonical group.
 
 def operation_for_member(member, operation_type: WeightOperationType | str):
     module = member.dep.target.module

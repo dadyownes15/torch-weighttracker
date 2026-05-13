@@ -3,8 +3,9 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 
-from torch_structracker import ModuleBitrateExtractor, StructureTracker
-from torch_structracker.calculations import BitRatePrModule, CalculationType
+from torch_structracker.extractors.codeq_bitrate_extractor import (
+    ModuleBitrateExtractor,
+)
 
 
 class TinyWeightedModel(nn.Module):
@@ -39,6 +40,24 @@ class FakeQuantParametrization(nn.Module):
         return self.quantizer(weight)
 
 
+def _bound_values(model: nn.Module) -> torch.Tensor:
+    extractor = ModuleBitrateExtractor()
+    refs = [
+        extractor.bind(module)
+        for _, module in ModuleBitrateExtractor.weighted_modules(model)
+    ]
+    assert all(ref is not None for ref in refs)
+    return torch.stack([ref.get() for ref in refs if ref is not None])
+
+
+def test_extractor_lists_weighted_modules():
+    model = TinyWeightedModel()
+
+    entries = tuple(ModuleBitrateExtractor.weighted_modules(model))
+
+    assert tuple(name for name, _ in entries) == ("fc1", "fc2")
+
+
 def test_extractor_reads_codeq_style_weight_parametrization():
     model = TinyWeightedModel()
     model.fc1.activation_bitrate = 8
@@ -49,11 +68,8 @@ def test_extractor_reads_codeq_style_weight_parametrization():
         FakeQuantParametrization(torch.tensor(3.0)),
     )
 
-    extractor = ModuleBitrateExtractor(model)
-
-    assert extractor.module_names == ("fc1", "fc2")
     torch.testing.assert_close(
-        extractor.extract(),
+        _bound_values(model),
         torch.tensor(
             [
                 [8.0, 3.0],
@@ -69,10 +85,8 @@ def test_extractor_reads_module_attribute_fallbacks():
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 6
 
-    extractor = ModuleBitrateExtractor(model)
-
     torch.testing.assert_close(
-        extractor.extract(),
+        _bound_values(model),
         torch.tensor(
             [
                 [4.0, 2.0],
@@ -80,6 +94,26 @@ def test_extractor_reads_module_attribute_fallbacks():
             ]
         ),
     )
+
+
+def test_extractor_returns_none_for_unweighted_module():
+    extractor = ModuleBitrateExtractor()
+
+    assert extractor.bind(nn.ReLU()) is None
+
+
+def test_extractor_ref_exposes_tensor_source_spec():
+    model = TinyWeightedModel()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+
+    ref = ModuleBitrateExtractor().bind(model.fc1)
+
+    assert ref is not None
+    assert ref.source_spec().shape == torch.Size([2])
+    assert ref.source_spec().dtype == torch.float32
+    assert ref.source_spec().device == model.fc1.weight.device
+    torch.testing.assert_close(ref.get(), torch.tensor([8.0, 2.0]))
 
 
 def test_extractor_rejects_non_scalar_bitwidths():
@@ -90,10 +124,10 @@ def test_extractor_rejects_non_scalar_bitwidths():
         FakeQuantParametrization(torch.tensor([2.0, 3.0])),
     )
 
-    extractor = ModuleBitrateExtractor(model)
+    extractor = ModuleBitrateExtractor()
 
     with pytest.raises(ValueError, match="weight bitrate must be scalar"):
-        extractor.extract()
+        extractor.bind(model.fc1)
 
 
 def test_extractor_rejects_multiple_weight_bitwidth_providers():
@@ -109,29 +143,7 @@ def test_extractor_rejects_multiple_weight_bitwidth_providers():
         FakeQuantParametrization(torch.tensor(3.0)),
     )
 
-    extractor = ModuleBitrateExtractor(model)
+    extractor = ModuleBitrateExtractor()
 
     with pytest.raises(ValueError, match="multiple weight bitwidth providers"):
-        extractor.extract()
-
-
-def test_structure_tracker_creates_bitrate_calculation_without_groups():
-    model = TinyWeightedModel()
-    model.fc1.weight_bitrate = 2
-    model.fc1.activation_bitrate = 4
-
-    calculation = StructureTracker(model=model).get_calculation(
-        CalculationType.BITRATE_PR_MODULE
-    )
-
-    assert isinstance(calculation, BitRatePrModule)
-    assert calculation.module_names == ("fc1", "fc2")
-    torch.testing.assert_close(
-        calculation(),
-        torch.tensor(
-            [
-                [4.0, 2.0],
-                [32.0, 32.0],
-            ]
-        ),
-    )
+        extractor.bind(model.fc1)

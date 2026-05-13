@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 .pytest_cache/
 .venv/
 __pycache__/
@@ -5,4 +6,32 @@ __pycache__/
 *.pyc
 build/
 dist/
+=======
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Build artifacts
+build/
+dist/
+*.egg-info/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Tool caches
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+
+# Editors and OS files
+.DS_Store
+.idea/
+.vscode/
+>>>>>>> gpu-based-group-lasso-generic
 

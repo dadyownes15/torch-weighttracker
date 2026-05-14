@@ -48,3 +48,6 @@ class BaseCalculation(nn.Module):
         return self.calc(calc_type)(*args, **kwargs)
 
 
+Calculation = BaseCalculation
+
+

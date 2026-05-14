@@ -177,6 +177,9 @@ class StructureTracker:
 
         return self.calculations[calculation_type]
 
+    def get_calculation(self, calculation_type: CalcType | str):
+        return self._get_calculation(CalcType(calculation_type))
+
     def _create_calculation(
         self,
         calculation_type: CalcType,

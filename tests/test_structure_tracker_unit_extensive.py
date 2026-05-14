@@ -114,7 +114,7 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = StructureTracker(model, groups=groups)
+    tracker = StructureTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
 
     structured_bops = tracker.create_tracker(TrackerType.STRUCTURED_BOPS)
     metrics = structured_bops.track()

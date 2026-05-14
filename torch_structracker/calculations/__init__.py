@@ -2,8 +2,10 @@ from torch_structracker.calculations.base import BaseCalculation, CalcType
 from torch_structracker.calculations.cached_calc import CachedCalculation
 from torch_structracker.calculations.calculations import (
     CALCULATION_SPECS,
-    BaselineGroupSizesCalc,
     ActiveMacsPrModuleCalc,
+    BaselineGroupSizesCalc,
+    BaselineMacsPrModuleCalc,
+    BaselineModuleAxesCalc,
     CalculationContext,
     CalculationSpec,
     UnitPrGroup,
@@ -11,12 +13,15 @@ from torch_structracker.calculations.calculations import (
     create_active_units_calc,
     create_active_macs_pr_module_calc,
     create_baseline_group_sizes_calc,
+    create_baseline_macs_pr_module_calc,
+    create_baseline_module_axes_calc,
     create_bitrate_pr_module_calc,
     create_calculation,
     create_group_change_effect_calc,
     create_group_sizes_calc,
     create_pipeline_calculation,
     create_unit_active_mask_calc,
+    create_unit_delta_to_module_axis_calc,
     create_units_to_group_calc,
     create_units_to_module_axis_calc,
 )
@@ -26,6 +31,7 @@ from torch_structracker.calculations.reduction_calc import (
     ReductionCalc,
 )
 from torch_structracker.plans.mapping_plan import (
+    create_unit_delta_to_module_axis_plan,
     create_units_to_group_plan,
     create_units_to_module_axis_plan,
 )
@@ -37,6 +43,8 @@ __all__ = [
     "BaseCalculation",
     "ActiveMacsPrModuleCalc",
     "BaselineGroupSizesCalc",
+    "BaselineMacsPrModuleCalc",
+    "BaselineModuleAxesCalc",
     "CALCULATION_SPECS",
     "CachedCalculation",
     "CalcType",
@@ -50,6 +58,8 @@ __all__ = [
     "create_active_units_calc",
     "create_active_macs_pr_module_calc",
     "create_baseline_group_sizes_calc",
+    "create_baseline_macs_pr_module_calc",
+    "create_baseline_module_axes_calc",
     "create_bitrate_pr_module_calc",
     "create_calculation",
     "create_group_change_effect_calc",
@@ -57,6 +67,8 @@ __all__ = [
     "create_group_sizes_calc",
     "create_pipeline_calculation",
     "create_unit_active_mask_calc",
+    "create_unit_delta_to_module_axis_calc",
+    "create_unit_delta_to_module_axis_plan",
     "create_units_to_group_calc",
     "create_units_to_group_plan",
     "create_units_to_module_axis_calc",

@@ -1,51 +1,77 @@
-from torch_structracker.calculations.base import CalcType
-from torch_structracker.calculations.static_calc import StaticCalc
+from __future__ import annotations
 
 import torch
-import torch.nn as nn
-from fvcore.nn import FlopCountAnalysis
+
+from torch_structracker.calculations.base import CalcType
+from torch_structracker.calculations.context import CalculationContext
+from torch_structracker.calculations.static_calc import StaticCalc
 
 
-class BaselineMacsPrModule(StaticCalc):
+class BaselineMacsPrModuleCalc(StaticCalc):
     required_calculations = ()
     calculation_type = CalcType.BASELINE_MACS_PR_MODULE
 
-    def __init__(self, baseline_pr_module: torch.Tensor) -> None:
-        super().__init__(
-            baseline_pr_module)
+    def __init__(self, baseline_macs: torch.Tensor) -> None:
+        super().__init__(baseline_macs)
 
 
-def create_baseline_macs_pr_module(
-    tracked_modules: list[nn.Module],
-    example_input: torch.Tensor,
-    model: nn.Module,
-    device: torch.device,
-    dtype: torch.dtype = torch.int,
-) -> BaselineMacsPrModule:
-    baseline_pr_module = _baseline_macs_by_weighted_module(
-        tracked_modules,
-        model,
-        example_input,
-        device,
-        dtype,
+def create_baseline_macs_pr_module_calc(
+    ctx: CalculationContext,
+    *,
+    device: torch.device | str,
+    dtype: torch.dtype,
+) -> BaselineMacsPrModuleCalc:
+    if ctx.example_inputs is None:
+        raise ValueError(
+            "BASELINE_MACS_PR_MODULE requires example_inputs so fvcore can "
+            "compute runtime MACs."
+        )
+
+    try:
+        from fvcore.nn import FlopCountAnalysis
+    except ImportError as error:
+        raise RuntimeError(
+            "BASELINE_MACS_PR_MODULE requires fvcore. Install fvcore or disable "
+            "structured BOPs MAC accounting."
+        ) from error
+
+    values = _fvcore_macs_by_weighted_module(ctx, FlopCountAnalysis)
+    return BaselineMacsPrModuleCalc(
+        torch.tensor(values, dtype=dtype, device=device)
     )
-    return BaselineMacsPrModule(baseline_pr_module)
 
 
-def _baseline_macs_by_weighted_module(
-    tracked_modules: list[nn.Module],
-    model: nn.Module,
-    example_input: torch.Tensor,
-    device: torch.device,
-    dtype: torch.dtype = torch.int,
-) -> torch.Tensor:
-    analysis = FlopCountAnalysis(model, example_input)
+def _fvcore_macs_by_weighted_module(
+    ctx: CalculationContext,
+    flop_count_analysis,
+) -> list[float]:
+    names_by_module = {module: name for name, module in ctx.model.named_modules()}
+    analysis = flop_count_analysis(ctx.model, ctx.example_inputs)
+    if hasattr(analysis, "unsupported_ops_warnings"):
+        analysis = analysis.unsupported_ops_warnings(False)
+    if hasattr(analysis, "uncalled_modules_warnings"):
+        analysis = analysis.uncalled_modules_warnings(False)
+
     by_module = analysis.by_module()
+    uncalled = (
+        set(analysis.uncalled_modules())
+        if hasattr(analysis, "uncalled_modules")
+        else set()
+    )
 
-    # Only store the ones we track
-    values = [
-        float(by_module.get(module, 0.0))
-        for module in tracked_modules
-    ]
+    values: list[float] = []
+    missing: list[str] = []
+    for module in ctx.weighted_modules:
+        name = names_by_module.get(module)
+        if name is None or name not in by_module or name in uncalled:
+            missing.append("<unnamed>" if name is None else name)
+            continue
+        values.append(float(by_module[name]))
 
-    return torch.tensor(values, dtype=dtype, device=device)
+    if missing:
+        raise ValueError(
+            "fvcore did not report MACs for weighted modules: "
+            + ", ".join(missing)
+        )
+
+    return values

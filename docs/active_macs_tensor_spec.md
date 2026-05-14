@@ -42,6 +42,14 @@ Supported weighted modules:
 - `nn.Conv2d` with `groups == 1`
 - fused-QKV attention projections represented as `nn.Linear(embed_dim, 3 * embed_dim)`
 - attention output projections represented as `nn.Linear(embed_dim, embed_dim)`
+- torch-pruning dependency groups that link a fused-QKV `Linear` member and a
+  projection `Linear` member, such as:
+
+  ```text
+  members for blocks.5.attn.proj:prune_in_channels:head_dim:
+    - blocks.5.attn.proj
+    - blocks.5.attn.qkv
+  ```
 
 Rejected for V1:
 
@@ -521,6 +529,13 @@ For V1, attention multipliers apply only to projection modules represented as
 Do not apply the fused-QKV multiplier to an `nn.MultiheadAttention` parent
 module; that parent is rejected by `BASELINE_MODULE_AXES`.
 
+This supported path is the usual torch-pruning split for timm-style attention:
+the dependency group contains both the projection input member and the fused-QKV
+output member. The fused-QKV member is a real `nn.Linear` whose output axis has
+length `3E`; the projection member is a real `nn.Linear` whose input axis has
+length `E`. `ACTIVE_MACS_PR_MODULE` should support that pair directly. It should
+not require replacing either module or inventing pseudo-modules.
+
 Axis selection and multiplier selection are separate:
 
 ```python
@@ -564,7 +579,7 @@ Then:
 def axis_multiplier_for_member(member: CanonicalMember, *, axis: int) -> float:
     multiplier = units_to_embed_multiplier_for_member(member)
 
-    if member.source_layout in {SourceLayout.FUSED_QKV, SourceLayout.SEPARATE_QKV}:
+    if member.source_layout == SourceLayout.FUSED_QKV:
         if axis == 1:
             return 3.0 * multiplier
 
@@ -681,6 +696,11 @@ so:
 ```text
 axis_multiplier = 3 * units_to_embed_multiplier
 ```
+
+`SourceLayout.SEPARATE_QKV` must not receive the fused `3x` multiplier. In V1,
+separate Q/K/V projections are supported only if they appear as separate
+weighted `nn.Linear` modules. Separate Q/K/V weights hidden inside an
+`nn.MultiheadAttention` parent remain unsupported with the parent module.
 
 Example for a timm-style attention block:
 

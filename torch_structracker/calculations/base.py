@@ -13,6 +13,7 @@ class CalcType(str, Enum):
     L2_NORM_PR_UNIT = "l2_norm_pr_unit"
     BITRATE_PR_MODULE = "bitrate_pr_module"
     UNITS_TO_MODULE_AXIS = "units_to_module_axis"
+    UNIT_DELTA_TO_MODULE_AXIS = "unit_delta_to_module_axis"
     ACTIVE_MACS_PR_MODULE = "active_macs_pr_module"
     BASELINE_MACS_PR_MODULE = "baseline_macs_pr_module"
     BASELINE_MODULE_AXES = "baseline_module_axes"
@@ -49,5 +50,4 @@ class BaseCalculation(nn.Module):
 
 
 Calculation = BaseCalculation
-
 

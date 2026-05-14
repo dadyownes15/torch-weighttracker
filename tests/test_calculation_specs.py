@@ -25,6 +25,16 @@ class TinyLinearChain(nn.Module):
         return self.fc2(self.fc1(x))
 
 
+class TinyQKVProjectionBlock(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.qkv = nn.Linear(4, 12, bias=False)
+        self.proj = nn.Linear(4, 4, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.qkv(x)[..., :4] + self.proj(x)
+
+
 class FakeGroup:
     def __init__(self, *items) -> None:
         self.items = list(items)
@@ -136,7 +146,7 @@ def test_module_axis_and_bitrates_share_weighted_module_order() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = StructureTracker(model, groups=groups)
+    tracker = StructureTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
 
     calculations = tracker.ensure_calculations(
         (
@@ -157,6 +167,68 @@ def test_module_axis_and_bitrates_share_weighted_module_order() -> None:
     torch.testing.assert_close(active_macs, torch.tensor([4.0, 2.0]))
     torch.testing.assert_close(bitrates, torch.tensor([8.0, 2.0, 4.0, 4.0]))
     torch.testing.assert_close(module_bops, torch.tensor([64.0, 32.0]))
+
+
+def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
+    model = TinyQKVProjectionBlock()
+    model.qkv.bitrate = 1
+    model.proj.bitrate = 1
+    with torch.no_grad():
+        model.qkv.weight.fill_(1)
+        model.proj.weight.fill_(1)
+        model.qkv.weight[(1, 3, 5, 7, 9, 11), :] = 0
+        model.proj.weight[:, (1, 3)] = 0
+
+    qkv_proj_group = FakeGroup(
+        _member(model.proj, prune_linear_in_channels, (0, 1, 2, 3)),
+        _member(model.qkv, prune_linear_out_channels, tuple(range(12))),
+    )
+    groups = canonicalize_groups(
+        (qkv_proj_group,),
+        num_heads={model.qkv: 2},
+        prune_dim=True,
+    )
+    tracker = StructureTracker(
+        model,
+        example_inputs=torch.randn(1, 4),
+        groups=groups,
+        num_heads={model.qkv: 2},
+        prune_dim=True,
+    )
+
+    calculations = tracker.ensure_calculations(
+        (
+            CalcType.UNIT_ACTIVE_MASK,
+            CalcType.UNIT_DELTA_TO_MODULE_AXIS,
+            CalcType.BASELINE_MODULE_AXES,
+            CalcType.ACTIVE_MACS_PR_MODULE,
+            CalcType.BITRATE_PR_MODULE,
+        )
+    )
+
+    active_units = calculations[CalcType.UNIT_ACTIVE_MASK]()
+    axis_delta = calculations[CalcType.UNIT_DELTA_TO_MODULE_AXIS](active_units)
+    baseline_axes = calculations[CalcType.BASELINE_MODULE_AXES]()
+    active_macs = calculations[CalcType.ACTIVE_MACS_PR_MODULE]()
+    bitrates = calculations[CalcType.BITRATE_PR_MODULE]()
+    module_bops = active_macs * bitrates.view(-1, 2).prod(dim=1)
+
+    torch.testing.assert_close(active_units, torch.tensor([1.0, 0.0]))
+    torch.testing.assert_close(axis_delta, torch.tensor([0.0, -6.0, -2.0, 0.0]))
+    torch.testing.assert_close(
+        baseline_axes,
+        torch.tensor([[4.0, 12.0], [4.0, 4.0]]),
+    )
+    torch.testing.assert_close(active_macs, torch.tensor([24.0, 8.0]))
+    torch.testing.assert_close(module_bops, torch.tensor([24.0, 8.0]))
+
+    structured_bops = tracker.create_tracker("structured_bops")
+    metrics = structured_bops.track()
+    torch.testing.assert_close(
+        metrics["structured_bops_pr_module"],
+        torch.tensor([24.0, 8.0]),
+    )
+    torch.testing.assert_close(metrics["structured_bops"], torch.tensor(32.0))
 
 
 def test_missing_groups_fail_for_group_required_calculations() -> None:

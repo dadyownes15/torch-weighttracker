@@ -3,8 +3,17 @@ from __future__ import annotations
 import torch
 
 from torch_structracker.calculations.base import CalcType
-from torch_structracker.calculations.calcs.active_macs_pr_module import ActiveMacsPrModuleCalc
+from torch_structracker.calculations.calcs.active_macs_pr_module import (
+    ActiveMacsPrModuleCalc,
+    create_active_macs_pr_module_calc,
+)
 from torch_structracker.calculations.calcs.active_units import create_active_units_calc
+from torch_structracker.calculations.calcs.baseline_macs_pr_module import (
+    create_baseline_macs_pr_module_calc,
+)
+from torch_structracker.calculations.calcs.baseline_module_axes import (
+    create_baseline_module_axes_calc,
+)
 from torch_structracker.calculations.calcs.baseline_group_sizes import create_baseline_group_sizes_calc
 from torch_structracker.calculations.calcs.bitrate_pr_module import create_bitrate_pr_module_calc
 from torch_structracker.calculations.calcs.group_change_effect import create_group_change_effect_calc
@@ -12,6 +21,9 @@ from torch_structracker.calculations.calcs.group_sizes import create_group_sizes
 from torch_structracker.calculations.calcs.l2_norm_pr_unit import create_l2_norm_pr_unit_calc
 from torch_structracker.calculations.calcs.structured_unit_sum import create_structured_unit_sum_calc
 from torch_structracker.calculations.calcs.unit_active_mask import create_unit_active_mask_calc
+from torch_structracker.calculations.calcs.unit_delta_to_module_axis import (
+    create_unit_delta_to_module_axis_calc,
+)
 from torch_structracker.calculations.calcs.units_to_group import create_units_to_group_calc
 from torch_structracker.calculations.calcs.units_to_module_axis import create_units_to_module_axis_calc
 from torch_structracker.calculations.context import CalculationContext
@@ -94,11 +106,41 @@ CALCULATION_SPECS: dict[CalcType, CalculationSpec] = {
             dtype=_calculation_dtype(ctx),
         ),
     ),
+    CalcType.UNIT_DELTA_TO_MODULE_AXIS: CalculationSpec(
+        calculation_type=CalcType.UNIT_DELTA_TO_MODULE_AXIS,
+        create=lambda ctx, deps: create_unit_delta_to_module_axis_calc(
+            ctx.canonical_groups,
+            weighted_module_index=ctx.weighted_module_index,
+            device=_calculation_device(ctx),
+            dtype=_calculation_dtype(ctx),
+        ),
+    ),
+    CalcType.BASELINE_MODULE_AXES: CalculationSpec(
+        calculation_type=CalcType.BASELINE_MODULE_AXES,
+        requires_groups=False,
+        cache_constant=True,
+        create=lambda ctx, deps: create_baseline_module_axes_calc(
+            ctx.weighted_modules,
+            device=_calculation_device(ctx),
+            dtype=_calculation_dtype(ctx),
+        ),
+    ),
+    CalcType.BASELINE_MACS_PR_MODULE: CalculationSpec(
+        calculation_type=CalcType.BASELINE_MACS_PR_MODULE,
+        requires_groups=False,
+        cache_constant=True,
+        create=lambda ctx, deps: create_baseline_macs_pr_module_calc(
+            ctx,
+            device=_calculation_device(ctx),
+            dtype=_calculation_dtype(ctx),
+        ),
+    ),
     CalcType.ACTIVE_MACS_PR_MODULE: CalculationSpec(
         calculation_type=CalcType.ACTIVE_MACS_PR_MODULE,
         required_calculations=ActiveMacsPrModuleCalc.required_calculations,
-        create=lambda ctx, deps: ActiveMacsPrModuleCalc(
-            deps,
+        create=lambda ctx, deps: create_active_macs_pr_module_calc(
+            ctx,
+            dependencies=deps,
         ),
     ),
     CalcType.BITRATE_PR_MODULE: CalculationSpec(

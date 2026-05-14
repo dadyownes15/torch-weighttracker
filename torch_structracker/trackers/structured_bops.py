@@ -7,13 +7,6 @@ class StructuredBOPs(BaseTracker):
         CalcType.ACTIVE_MACS_PR_MODULE,
         CalcType.BITRATE_PR_MODULE,
     )
-    
-    def required_calculations(**kwargs):
-        base_calcs = [
-                CalcType.BITRATE_PR_MODULE,
-        ]
-        if 
-    
 
     def compute(self):
         active_macs = self.calc(CalcType.ACTIVE_MACS_PR_MODULE)()

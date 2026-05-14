@@ -1,11 +1,12 @@
 from abc import ABC, abstractmethod
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from enum import Enum
 
 import torch
 from torch import nn
 
-from torch_structracker.calculations import CalcType
+from torch_structracker.calculations import CalcType, CalculationContext
+from torch_structracker.consumer_ignore import IgnoreItem
 
 
 class TrackerType(str, Enum):
@@ -14,6 +15,16 @@ class TrackerType(str, Enum):
 
 class BaseTracker(nn.Module, ABC):
     required_calculations: tuple[CalcType, ...] = ()
+
+    @classmethod
+    def calculation_context(
+        cls,
+        owner,
+        *,
+        ignore: Iterable[IgnoreItem] = (),
+        **kwargs,
+    ) -> CalculationContext | None:
+        return None
 
     def __init__(
         self,

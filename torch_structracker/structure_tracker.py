@@ -1,4 +1,4 @@
-from typing import List
+from collections.abc import Iterable
 import torch
 import torch.nn as nn
 
@@ -10,7 +10,12 @@ from torch_structracker.calculations import (
     CalculationContext,
 )
 
-from torch_structracker.canonical_units import CanonicalUnitGroup, canonicalize_groups
+from torch_structracker.canonical_units import (
+    CanonicalMember,
+    CanonicalUnitGroup,
+    canonicalize_groups,
+)
+from torch_structracker.consumer_ignore import IgnoreItem
 from torch_structracker.extractors.codeq_bitrate_extractor import ModuleBitrateExtractor
 from torch_structracker.reductions.builder import IndexSelection, SegmentSelection
 from torch_structracker.regularizers import (
@@ -167,15 +172,24 @@ class StructureTracker:
         self,
         calculation_type: CalcType,
         *,
+        context: CalculationContext | None = None,
+        context_key: tuple | None = None,
         stack: tuple[CalcType, ...] = (),
     ):
-        if calculation_type not in self.calculations:
-            self.calculations[calculation_type] = self._create_calculation(
+        if context is None:
+            context = self._calculation_context()
+            context_key = None
+
+        cache_key = self._calculation_cache_key(calculation_type, context_key)
+        if cache_key not in self.calculations:
+            self.calculations[cache_key] = self._create_calculation(
                 calculation_type,
+                context=context,
+                context_key=context_key,
                 stack=stack,
             )
 
-        return self.calculations[calculation_type]
+        return self.calculations[cache_key]
 
     def get_calculation(self, calculation_type: CalcType | str):
         return self._get_calculation(CalcType(calculation_type))
@@ -184,6 +198,8 @@ class StructureTracker:
         self,
         calculation_type: CalcType,
         *,
+        context: CalculationContext,
+        context_key: tuple | None,
         stack: tuple[CalcType, ...],
     ):
         if calculation_type in stack:
@@ -198,15 +214,23 @@ class StructureTracker:
                 f"Unknown calculation type: {calculation_type.value}"
             ) from error
 
-        if spec.requires_groups:
-            self._require_groups(calculation_type)
+        if spec.requires_groups and len(context.canonical_groups) == 0:
+            raise ValueError(
+                f"{calculation_type.value} requires dependency groups. Pass groups "
+                "when constructing StructureTracker."
+            )
 
         next_stack = (*stack, calculation_type)
         dependencies = {
-            dependency: self._get_calculation(dependency, stack=next_stack)
+            dependency: self._get_calculation(
+                dependency,
+                context=context,
+                context_key=context_key,
+                stack=next_stack,
+            )
             for dependency in spec.required_calculations
         }
-        calculation = spec.create(self._calculation_context(), dependencies)
+        calculation = spec.create(context, dependencies)
 
         if spec.cache_constant:
             cached = CachedCalculation(calculation)
@@ -259,31 +283,65 @@ class StructureTracker:
 
         return "\n".join(lines)
 
-    def ensure_calculations(self, calculation_types: tuple[CalcType,...]) -> dict[CalcType, Calculation]:
+    def ensure_calculations(
+        self,
+        calculation_types: tuple[CalcType, ...],
+        *,
+        context: CalculationContext | None = None,
+    ) -> dict[CalcType, Calculation]:
+        context_key = None
+        if context is None:
+            context = self._calculation_context()
+        else:
+            context_key = self._calculation_context_key(context)
+
         calculations = {}
         for calculation_type in calculation_types:
-            calculations[calculation_type] = self._get_calculation(calculation_type)
+            calculations[calculation_type] = self._get_calculation(
+                calculation_type,
+                context=context,
+                context_key=context_key,
+                stack=(),
+            )
         return calculations
 
-    def create_tracker(self, tracker_type: TrackerType, **kwargs):
-        """
-        Tracker types:
-            "structured_bops" - kwargs(ignore: List[nn.Module])
-            
-        """
-        
+    def create_tracker(
+        self,
+        tracker_type: TrackerType,
+        *,
+        ignore: Iterable[IgnoreItem] = (),
+        **kwargs,
+    ):
         tracker_type = TrackerType(tracker_type)
         tracker_cls = tracker_class_for_type(tracker_type)
-        calculations = self.ensure_calculations(tracker_cls.required_calculations)
-        tracker = tracker_cls(calculations=calculations)
+        context = tracker_cls.calculation_context(self, ignore=ignore, **kwargs)
+        if context is not None:
+            self._validate_consumer_context(context)
+        calculations = self.ensure_calculations(
+            tracker_cls.required_calculations,
+            context=context,
+        )
+        tracker = tracker_cls(calculations=calculations, **kwargs)
         self.trackers.append(tracker)
         return tracker
 
-    def create_regularizer(self, regularizer_type: RegularizerType, ignore_modules: List[nn.Module] = []):
+    def create_regularizer(
+        self,
+        regularizer_type: RegularizerType,
+        *,
+        ignore: Iterable[IgnoreItem] = (),
+        **kwargs,
+    ):
         regularizer_type = RegularizerType(regularizer_type)
         regularizer_cls = regularizer_class_for_type(regularizer_type)
-        calculations = self.ensure_calculations(regularizer_cls.required_calculations)
-        regularizer = regularizer_cls(calculations=calculations)
+        context = regularizer_cls.calculation_context(self, ignore=ignore, **kwargs)
+        if context is not None:
+            self._validate_consumer_context(context)
+        calculations = self.ensure_calculations(
+            regularizer_cls.required_calculations,
+            context=context,
+        )
+        regularizer = regularizer_cls(calculations=calculations, **kwargs)
         self.regularizers.append(regularizer)
         return regularizer
 
@@ -300,15 +358,72 @@ class StructureTracker:
                 "when constructing StructTracker."
             )
 
-    def _calculation_context(self) -> CalculationContext:
+    def _calculation_context(
+        self,
+        *,
+        canonical_groups: Iterable[CanonicalUnitGroup] | None = None,
+        weighted_modules: Iterable[nn.Module] | None = None,
+    ) -> CalculationContext:
+        canonical_groups = (
+            tuple(self.canonical_groups)
+            if canonical_groups is None
+            else tuple(canonical_groups)
+        )
+        weighted_modules = (
+            self._get_weighted_modules()
+            if weighted_modules is None
+            else tuple(weighted_modules)
+        )
+
         return CalculationContext(
             model=self.model,
-            canonical_groups=tuple(self.canonical_groups),
+            canonical_groups=canonical_groups,
             device=self.device,
             dtype=self.dtype,
-            weighted_modules=self._get_weighted_modules(),
-            weighted_module_index=self._get_weighted_module_index(),
+            weighted_modules=weighted_modules,
+            weighted_module_index={
+                module: index for index, module in enumerate(weighted_modules)
+            },
             example_inputs=self.example_inputs,
+        )
+
+    def _validate_consumer_context(self, context: CalculationContext) -> None:
+        if len(context.canonical_groups) > 0 and all(
+            len(group.members) == 0 for group in context.canonical_groups
+        ):
+            raise ValueError(
+                "Consumer ignore removed all canonical members from the calculation "
+                "context."
+            )
+
+        if (
+            len(self._get_weighted_modules()) > 0
+            and len(context.weighted_modules) == 0
+        ):
+            raise ValueError(
+                "Consumer ignore removed all weighted modules from the calculation "
+                "context."
+            )
+
+    def _calculation_cache_key(
+        self,
+        calculation_type: CalcType,
+        context_key: tuple | None,
+    ) -> CalcType | tuple[CalcType, tuple]:
+        if context_key is None:
+            return calculation_type
+        return calculation_type, context_key
+
+    def _calculation_context_key(
+        self,
+        context: CalculationContext,
+    ) -> tuple:
+        return (
+            tuple(_canonical_group_key(group) for group in context.canonical_groups),
+            tuple(id(module) for module in context.weighted_modules),
+            context.device,
+            context.dtype,
+            None if context.example_inputs is None else id(context.example_inputs),
         )
         
     def _get_weighted_module_entries(self):
@@ -394,3 +509,38 @@ def _format_attention_details(member) -> str:
     if member.head_dim is not None:
         details.append(f"head_dim={member.head_dim}")
     return " ".join(details)
+
+
+def _canonical_group_key(group: CanonicalUnitGroup) -> tuple:
+    return (
+        group.group_id,
+        group.offset,
+        group.length,
+        group.unit_kind,
+        tuple(_canonical_member_key(member) for member in group.members),
+    )
+
+
+def _canonical_member_key(member: CanonicalMember) -> tuple:
+    return (
+        id(member.module),
+        member.unit_axis,
+        member.source_layout,
+        _selection_key(member.destination),
+        (
+            None
+            if member.source_indices is None
+            else tuple(int(index) for index in member.source_indices)
+        ),
+        member.embed_dim,
+        member.num_heads,
+        member.head_dim,
+    )
+
+
+def _selection_key(selection: SegmentSelection | IndexSelection) -> tuple:
+    if isinstance(selection, SegmentSelection):
+        return "segment", int(selection.start), int(selection.length)
+    if isinstance(selection, IndexSelection):
+        return "index", tuple(int(index) for index in selection.indices)
+    raise TypeError(f"Unsupported selection type: {type(selection).__name__}")

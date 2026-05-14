@@ -36,7 +36,7 @@ def _reduce_rows(
         return flat.abs().sum(dim=1)
 
     if operation == WeightOperationType.L2:
-        return torch.sqrt((flat**2).sum(dim=1))
+        return torch.linalg.vector_norm(flat, ord=2, dim=1)
 
     raise ValueError(f"Unsupported QKV operation: {operation_type}")
 

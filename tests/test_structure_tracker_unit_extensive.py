@@ -5,6 +5,10 @@ import torch.nn as nn
 from tests.test_calculation_specs import TinyLinearChain, _model_and_groups
 from torch_structracker import StructureTracker
 from torch_structracker.calculations import CalcType
+from torch_structracker.consumer_ignore import (
+    ModuleIgnore,
+    without_ignored_canonical_members,
+)
 from torch_structracker.regularizers import RegularizerType
 from torch_structracker.trackers import TrackerType
 
@@ -139,3 +143,144 @@ def test_create_regularizer_wires_group_lasso_and_keeps_gradients() -> None:
     assert model.fc1.weight.grad is not None
     assert model.fc2.weight.grad is not None
     assert tracker.regularizers == [regularizer]
+
+
+def test_group_lasso_ignore_is_invariant_to_ignored_module_weights() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker(model, groups=groups)
+    regularizer = tracker.create_regularizer(
+        RegularizerType.GROUP_LASSO,
+        ignore=[model.fc2],
+    )
+
+    before = regularizer()
+
+    with torch.no_grad():
+        model.fc2.weight.add_(1000.0)
+
+    torch.testing.assert_close(regularizer(), before)
+
+    with torch.no_grad():
+        model.fc1.weight.add_(1.0)
+
+    assert not torch.allclose(regularizer(), before)
+
+
+def test_group_lasso_ignore_all_members_raises() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker(model, groups=groups)
+
+    with pytest.raises(ValueError, match="removed all canonical members"):
+        tracker.create_regularizer(
+            RegularizerType.GROUP_LASSO,
+            ignore=[model],
+        )
+
+
+def test_structured_bops_ignore_all_weighted_modules_raises() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    with pytest.raises(ValueError, match="removed all canonical members"):
+        tracker.create_tracker(
+            TrackerType.STRUCTURED_BOPS,
+            ignore=[model],
+        )
+
+
+def test_structured_bops_ignore_filters_weighted_modules() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = StructureTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    full = tracker.create_tracker(TrackerType.STRUCTURED_BOPS)
+    filtered = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        ignore=[model.fc2],
+    )
+
+    assert full.compute().numel() == len(tracker._get_weighted_modules())
+    assert filtered.compute().numel() == 1
+
+
+def test_group_lasso_ignore_uses_context_key() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker(model, groups=groups)
+    tracker.ensure_calculations((CalcType.L2_NORM_PR_UNIT,))
+    global_l2 = tracker.calculations[CalcType.L2_NORM_PR_UNIT]
+
+    regularizer = tracker.create_regularizer(
+        RegularizerType.GROUP_LASSO,
+        ignore=[model.fc2],
+    )
+
+    assert regularizer.calc(CalcType.L2_NORM_PR_UNIT) is not global_l2
+
+
+def test_filtering_keeps_group_index_space_stable() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker(model, groups=groups)
+
+    filtered_groups = without_ignored_canonical_members(
+        tracker.canonical_groups,
+        ModuleIgnore([model.fc2]),
+    )
+
+    assert [
+        (group.group_id, group.offset, group.length)
+        for group in filtered_groups
+    ] == [
+        (group.group_id, group.offset, group.length)
+        for group in tracker.canonical_groups
+    ]
+    assert all(
+        member.module is not model.fc2
+        for group in filtered_groups
+        for member in group.members
+    )
+
+
+def test_consumer_ignore_does_not_mutate_global_calculations() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    tracker.ensure_calculations((CalcType.BITRATE_PR_MODULE,))
+    global_calc = tracker.calculations[CalcType.BITRATE_PR_MODULE]
+
+    tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        ignore=[model.fc2],
+    )
+
+    assert tracker.calculations[CalcType.BITRATE_PR_MODULE] is global_calc
+
+
+def test_same_ignore_reuses_context_keyed_calculation() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    first = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        ignore=[model.fc2],
+    )
+    second = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        ignore=[model.fc2],
+    )
+
+    assert first.calc(CalcType.BITRATE_PR_MODULE) is second.calc(
+        CalcType.BITRATE_PR_MODULE
+    )
+
+
+def test_consumer_kwargs_are_not_silently_dropped() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    with pytest.raises(TypeError):
+        tracker.create_tracker(
+            TrackerType.STRUCTURED_BOPS,
+            unsupported_option=True,
+        )

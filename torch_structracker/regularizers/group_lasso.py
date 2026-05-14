@@ -1,6 +1,13 @@
+from collections.abc import Iterable
+
 import torch
 
-from torch_structracker.calculations import CalcType
+from torch_structracker.calculations import CalcType, CalculationContext
+from torch_structracker.consumer_ignore import (
+    IgnoreItem,
+    ModuleIgnore,
+    without_ignored_canonical_members,
+)
 from torch_structracker.regularizers.base import BaseRegularizer, RegularizerType
 
 
@@ -14,6 +21,25 @@ class GroupLasso(BaseRegularizer):
         CalcType.GROUP_CHANGE_EFFECT,
         CalcType.GROUP_SIZES,
     )
+
+    @classmethod
+    def calculation_context(
+        cls,
+        owner,
+        *,
+        ignore: Iterable[IgnoreItem] = (),
+        **kwargs,
+    ) -> CalculationContext | None:
+        ignored = ModuleIgnore(ignore)
+        if not ignored:
+            return None
+
+        return owner._calculation_context(
+            canonical_groups=without_ignored_canonical_members(
+                owner.canonical_groups,
+                ignored,
+            ),
+        )
 
     def forward(self) -> torch.Tensor:
         unit_active_mask = self.compute(CalcType.UNIT_ACTIVE_MASK)

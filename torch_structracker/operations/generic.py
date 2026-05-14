@@ -68,7 +68,17 @@ class L1Weight(_DimensionalWeightOperation):
 
 class L2Weight(_DimensionalWeightOperation):
     def forward(self, weight: torch.Tensor) -> torch.Tensor:
-        return torch.sqrt((weight**2).sum(dim=self.dim, keepdim=self.keepdim))
+        return torch.linalg.vector_norm(
+            weight,
+            ord=2,
+            dim=self.dim,
+            keepdim=self.keepdim,
+        )
+
+
+class ElementwiseL2Weight(_DimensionalWeightOperation):
+    def forward(self, weight: torch.Tensor) -> torch.Tensor:
+        return weight.abs()
 
 
 def create_generic_operation(
@@ -94,6 +104,8 @@ def create_generic_operation(
         return L1Weight(dim=dim, keepdim=keepdim)
 
     if operation == WeightOperationType.L2:
+        if dim == ():
+            return ElementwiseL2Weight(dim=dim, keepdim=keepdim)
         return L2Weight(dim=dim, keepdim=keepdim)
 
     raise ValueError(f"Unknown weight operation: {operation}")

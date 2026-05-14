@@ -4,19 +4,22 @@ from torch_structracker.trackers.base import BaseTracker
 
 class StructuredBOPs(BaseTracker):
     required_calculations = (
-        CalcType.UNIT_ACTIVE_MASK,
-        CalcType.UNITS_TO_MODULE_AXIS,
+        CalcType.ACTIVE_MACS_PR_MODULE,
         CalcType.BITRATE_PR_MODULE,
     )
+    
+    def required_calculations(**kwargs):
+        base_calcs = [
+                CalcType.BITRATE_PR_MODULE,
+        ]
+        if 
+    
 
     def compute(self):
-        unit_active_mask = self.calc(CalcType.UNIT_ACTIVE_MASK)()
-        print("active units mask", unit_active_mask)
-        module_axis = self.calc(CalcType.UNITS_TO_MODULE_AXIS)(unit_active_mask)
-        print("active_unit_pr_Axis", module_axis)
+        active_macs = self.calc(CalcType.ACTIVE_MACS_PR_MODULE)()
         bitrates = self.calc(CalcType.BITRATE_PR_MODULE)()
-        print("module bitrate, ", bitrates)
-        return (module_axis * bitrates).view(-1, 2).prod(dim=1)
+        bitrate_product = bitrates.view(-1, 2).prod(dim=1)
+        return active_macs * bitrate_product
 
     def toMetric(self, result):
         return {

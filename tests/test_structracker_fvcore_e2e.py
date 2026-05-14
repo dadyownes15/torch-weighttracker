@@ -8,6 +8,7 @@ from torch import Tensor
 from tests.fixtures_models import TinyTransformerClassifier
 from torch_structracker import StructureTracker
 from torch_structracker.calculations import CalcType
+from torch_structracker.trackers import TrackerType
 from torch_structracker.torch_pruning.pruner.function import (
     prune_batchnorm_in_channels,
     prune_batchnorm_out_channels,
@@ -222,6 +223,30 @@ def _fvcore_by_module(model: nn.Module, example_inputs) -> dict[str, int]:
     analysis = analysis.unsupported_ops_warnings(False)
     analysis = analysis.uncalled_modules_warnings(False)
     return dict(analysis.by_module())
+
+
+def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None:
+    model = TinyResNetClassifier().eval()
+    model.stem_conv.activation_bitrate = 8
+    model.stem_conv.weight_bitrate = 4
+    model.block1.conv1.bitrate = 6
+    example_inputs = torch.randn(1, 3, 32, 32)
+    tracker = StructureTracker(model, example_inputs)
+
+    metrics = tracker.create_tracker(TrackerType.STRUCTURED_BOPS).track()
+    bitrates = tracker.get_calculation(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
+    by_module = _fvcore_by_module(model, example_inputs)
+    expected = torch.tensor(
+        [
+            float(by_module[name]) * float(bitrates[index].prod())
+            for index, (name, _) in enumerate(tracker._get_weighted_module_entries())
+        ],
+        dtype=metrics["structured_bops_pr_module"].dtype,
+        device=metrics["structured_bops_pr_module"].device,
+    )
+
+    torch.testing.assert_close(metrics["structured_bops_pr_module"], expected)
+    torch.testing.assert_close(metrics["structured_bops"], expected.sum())
 
 
 def _conv2d_flops(module: nn.Conv2d, output_hw: tuple[int, int], batch_size: int = 1):

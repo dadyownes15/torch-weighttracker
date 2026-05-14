@@ -19,9 +19,6 @@ def test_dependency_build_requires_example_inputs_and_root_types_together() -> N
     model = TinyLinearChain()
 
     with pytest.raises(ValueError, match="requires both example_inputs"):
-        StructureTracker(model, example_inputs=torch.randn(1, 2))
-
-    with pytest.raises(ValueError, match="requires both example_inputs"):
         StructureTracker(model, root_module_types=[nn.Linear])
 
 
@@ -122,10 +119,10 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
     structured_bops = tracker.create_tracker(TrackerType.STRUCTURED_BOPS)
     metrics = structured_bops.track()
 
-    torch.testing.assert_close(metrics["structured_bops"], torch.tensor(64.0))
+    torch.testing.assert_close(metrics["structured_bops"], torch.tensor(96.0))
     torch.testing.assert_close(
         metrics["structured_bops_pr_module"],
-        torch.tensor([32.0, 32.0]),
+        torch.tensor([64.0, 32.0]),
     )
     assert tracker.trackers == [structured_bops]
 

@@ -13,6 +13,9 @@ class CalcType(str, Enum):
     L2_NORM_PR_UNIT = "l2_norm_pr_unit"
     BITRATE_PR_MODULE = "bitrate_pr_module"
     UNITS_TO_MODULE_AXIS = "units_to_module_axis"
+    ACTIVE_MACS_PR_MODULE = "active_macs_pr_module"
+    BASELINE_MACS_PR_MODULE = "baseline_macs_pr_module"
+    BASELINE_MODULE_AXES = "baseline_module_axes"
     UNITS_TO_GROUP = "units_to_group"
     UNIT_ACTIVE_MASK = "unit_active_mask"
     GROUP_CHANGE_EFFECT = "group_change_effect"
@@ -43,3 +46,5 @@ class BaseCalculation(nn.Module):
 
     def compute(self, calc_type: CalcType | str, *args, **kwargs) -> torch.Tensor:
         return self.calc(calc_type)(*args, **kwargs)
+
+

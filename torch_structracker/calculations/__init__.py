@@ -3,11 +3,13 @@ from torch_structracker.calculations.cached_calc import CachedCalculation
 from torch_structracker.calculations.calculations import (
     CALCULATION_SPECS,
     BaselineGroupSizesCalc,
+    ActiveMacsPrModuleCalc,
     CalculationContext,
     CalculationSpec,
     GroupSizesCalc,
     UnitActiveMaskCalc,
     create_active_units_calc,
+    create_active_macs_pr_module_calc,
     create_baseline_group_sizes_calc,
     create_bitrate_pr_module_calc,
     create_calculation,
@@ -33,6 +35,7 @@ from torch_structracker.plans.unit_weight_operation_plan import (
 
 __all__ = [
     "BaseCalculation",
+    "ActiveMacsPrModuleCalc",
     "BaselineGroupSizesCalc",
     "CALCULATION_SPECS",
     "CachedCalculation",
@@ -45,6 +48,7 @@ __all__ = [
     "ReductionCalc",
     "UnitActiveMaskCalc",
     "create_active_units_calc",
+    "create_active_macs_pr_module_calc",
     "create_baseline_group_sizes_calc",
     "create_bitrate_pr_module_calc",
     "create_calculation",

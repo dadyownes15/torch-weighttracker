@@ -1,6 +1,8 @@
+from typing import List
 import torch
 import torch.nn as nn
 
+from torch_structracker.calculations.base import Calculation
 import torch_structracker.calculations.calculations as calculation_impl
 from torch_structracker.calculations import (
     CalcType,
@@ -27,7 +29,8 @@ class StructureTracker:
     def __init__(
         self,
         model: nn.Module,
-        example_inputs,
+        example_inputs=None,
+        groups=None,
         root_module_types=None,
         forward_fn=None,
         output_transform=None,
@@ -52,22 +55,37 @@ class StructureTracker:
         self.ignored_params = [] if ignored_params is None else list(ignored_params)
         self.dependency_graph = None
 
-        
-        self.groups = self._build_groups(
-            example_inputs=example_inputs,
-            root_module_types=root_module_types,
-            forward_fn=forward_fn,
-            output_transform=output_transform,
-            unwrapped_parameters=unwrapped_parameters,
-            customized_pruners=customized_pruners,
-        )
+        self.example_inputs = example_inputs
+
+        if groups is None:
+            if example_inputs is None:
+                if root_module_types is not None:
+                    raise ValueError(
+                        "Dependency graph construction requires both example_inputs "
+                        "and root_module_types."
+                    )
+                self.groups = []
+            else:
+                self.groups = self._build_groups(
+                    example_inputs=example_inputs,
+                    root_module_types=root_module_types,
+                    forward_fn=forward_fn,
+                    output_transform=output_transform,
+                    unwrapped_parameters=unwrapped_parameters,
+                    customized_pruners=customized_pruners,
+                )
+        else:
+            self.groups = list(groups)
             
-        self.canonical_groups = canonicalize_groups(
-            self.groups,
-            num_heads=self.num_heads,
-            prune_dim=self.prune_dim,
-            prune_num_heads=self.prune_num_heads,
-        )
+        if all(isinstance(group, CanonicalUnitGroup) for group in self.groups):
+            self.canonical_groups = tuple(self.groups)
+        else:
+            self.canonical_groups = canonicalize_groups(
+                self.groups,
+                num_heads=self.num_heads,
+                prune_dim=self.prune_dim,
+                prune_num_heads=self.prune_num_heads,
+            )
 
         self.calculations = {}
         self._weighted_module_entries = None
@@ -144,16 +162,12 @@ class StructureTracker:
         filtered_group._group = list(filtered_items)
         filtered_group._DG = getattr(group, "_DG", None)
         return filtered_group
-
-    def get_calculation(self, calculation_type: CalcType):
-        calculation_type = CalcType(calculation_type)
-        return self._get_calculation(calculation_type, stack=())
-
+        
     def _get_calculation(
         self,
         calculation_type: CalcType,
         *,
-        stack: tuple[CalcType, ...],
+        stack: tuple[CalcType, ...] = (),
     ):
         if calculation_type not in self.calculations:
             self.calculations[calculation_type] = self._create_calculation(
@@ -242,14 +256,19 @@ class StructureTracker:
 
         return "\n".join(lines)
 
-    def ensure_calculations(self, calculation_types):
+    def ensure_calculations(self, calculation_types: tuple[CalcType,...]) -> dict[CalcType, Calculation]:
         calculations = {}
         for calculation_type in calculation_types:
-            calculation_type = CalcType(calculation_type)
-            calculations[calculation_type] = self.get_calculation(calculation_type)
+            calculations[calculation_type] = self._get_calculation(calculation_type)
         return calculations
 
-    def create_tracker(self, tracker_type: TrackerType):
+    def create_tracker(self, tracker_type: TrackerType, **kwargs):
+        """
+        Tracker types:
+            "structured_bops" - kwargs(ignore: List[nn.Module])
+            
+        """
+        
         tracker_type = TrackerType(tracker_type)
         tracker_cls = tracker_class_for_type(tracker_type)
         calculations = self.ensure_calculations(tracker_cls.required_calculations)
@@ -257,7 +276,7 @@ class StructureTracker:
         self.trackers.append(tracker)
         return tracker
 
-    def create_regularizer(self, regularizer_type: RegularizerType):
+    def create_regularizer(self, regularizer_type: RegularizerType, ignore_modules: List[nn.Module] = []):
         regularizer_type = RegularizerType(regularizer_type)
         regularizer_cls = regularizer_class_for_type(regularizer_type)
         calculations = self.ensure_calculations(regularizer_cls.required_calculations)
@@ -286,6 +305,7 @@ class StructureTracker:
             dtype=self.dtype,
             weighted_modules=self._get_weighted_modules(),
             weighted_module_index=self._get_weighted_module_index(),
+            example_inputs=self.example_inputs,
         )
         
     def _get_weighted_module_entries(self):

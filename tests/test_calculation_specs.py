@@ -142,18 +142,21 @@ def test_module_axis_and_bitrates_share_weighted_module_order() -> None:
         (
             CalcType.UNIT_ACTIVE_MASK,
             CalcType.UNITS_TO_MODULE_AXIS,
+            CalcType.ACTIVE_MACS_PR_MODULE,
             CalcType.BITRATE_PR_MODULE,
         )
     )
 
     unit_active_mask = calculations[CalcType.UNIT_ACTIVE_MASK]()
     module_axis = calculations[CalcType.UNITS_TO_MODULE_AXIS](unit_active_mask)
+    active_macs = calculations[CalcType.ACTIVE_MACS_PR_MODULE]()
     bitrates = calculations[CalcType.BITRATE_PR_MODULE]()
-    module_bops = (module_axis * bitrates).view(-1, 2).prod(dim=1)
+    module_bops = active_macs * bitrates.view(-1, 2).prod(dim=1)
 
-    torch.testing.assert_close(module_axis, torch.tensor([2.0, 2.0, 2.0, 1.0]))
+    torch.testing.assert_close(module_axis, torch.tensor([0.0, 2.0, 2.0, 1.0]))
+    torch.testing.assert_close(active_macs, torch.tensor([4.0, 2.0]))
     torch.testing.assert_close(bitrates, torch.tensor([8.0, 2.0, 4.0, 4.0]))
-    torch.testing.assert_close(module_bops, torch.tensor([32.0, 32.0]))
+    torch.testing.assert_close(module_bops, torch.tensor([64.0, 32.0]))
 
 
 def test_missing_groups_fail_for_group_required_calculations() -> None:

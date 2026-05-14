@@ -46,3 +46,32 @@ module_map.get(member.module,member.axis)
 
 
 this also allow us to skip or drop certain modules, or axises in calcs. 
+
+## Layer ignoring
+
+
+For doing grouplasso, we want to include batchnorm, when we do tracking we dont.
+
+How do we encode such ignore things into the calcs. Two approaches as i see it:
+
+#### Approach 1
+
+Make regularizer and trackers take ignore_module
+
+when doing get_calc, require calcs, that not only match the calc but also the ignore
+
+when building plans, it skips the ignored layer
+
+
+## Down sides
+
+  1. We cannot reuse calcs that has different ignores
+  2. Cannot reference a global list using a calc specific indexing, as we have no way of syncing
+  3. we apply the ignore on calcs that might not be effected by it 
+
+#### Approach 2
+
+If we want to ignore batchnorms in structured bobs, we can make a simple fix: skip the batchnorms when doing the plan for the active units. If we do this we get the rest for free.
+
+
+

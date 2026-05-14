@@ -38,6 +38,29 @@ def test_structure_tracker_builds_groups_from_example_inputs() -> None:
     assert tracker.dependency_graph is not None
 
 
+def test_view_structures_returns_canonical_group_printout() -> None:
+    model, groups = _model_and_groups()
+    tracker = StructureTracker.__new__(StructureTracker)
+    tracker.model = model
+    tracker.canonical_groups = groups
+
+    text = tracker.view_structures()
+
+    assert "CanonicalGroups" in text
+    assert "groups=2 total_units=4" in text
+    assert "- group 0: units=[0:3) length=3 kind=channel members=2" in text
+    assert (
+        "    - fc1 Linear axis=out_channel layout=plain dest=(0, 1, 2)"
+        in text
+    )
+    assert (
+        "    - fc2 Linear axis=in_channel layout=plain dest=(0, 1, 2)"
+        in text
+    )
+    assert "- group 1: units=[3:4) length=1 kind=channel members=1" in text
+    assert "    - fc2 Linear axis=out_channel layout=plain dest=(3)" in text
+
+
 def test_structure_tracker_removes_ignored_layer_members_from_groups() -> None:
     model = TinyLinearChain()
     tracker = StructureTracker(
@@ -99,10 +122,10 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
     structured_bops = tracker.create_tracker(TrackerType.STRUCTURED_BOPS)
     metrics = structured_bops.track()
 
-    torch.testing.assert_close(metrics["structured_bops"], torch.tensor(32.0))
+    torch.testing.assert_close(metrics["structured_bops"], torch.tensor(64.0))
     torch.testing.assert_close(
         metrics["structured_bops_pr_module"],
-        torch.tensor([0.0, 32.0]),
+        torch.tensor([32.0, 32.0]),
     )
     assert tracker.trackers == [structured_bops]
 

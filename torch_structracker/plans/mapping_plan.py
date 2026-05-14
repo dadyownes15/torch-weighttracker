@@ -93,13 +93,15 @@ def create_units_to_module_axis_plan(
     builder = ReductionPlanBuilder(output_length=len(weighted_module_index) * 2)
     seen: set[tuple[int, int, int]] = set()
     record_count = 0
-
+    
     for member in canonical_members(canonical_groups):
         module_index = weighted_module_index.get(member.module)
         if module_index is None:
             continue
+        # This is bad, we can have more than either in or out
 
         axis = 0 if member.unit_axis == UnitAxis.IN_CHANNEL else 1
+
         source_indices: list[int] = []
         for unit_index in member.unit_indices:
             key = (module_index, axis, int(unit_index))

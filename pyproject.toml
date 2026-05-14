@@ -39,12 +39,15 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/your-username/torch-structracker"
-Issues = "https://github.com/your-username/torch-structracker/issues"
+Homepage = "https://github.com/dadyownes15/torch-structracker"
+Issues = "https://github.com/dadyownes15/torch-structracker/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["torch_structracker*"]
+
+[tool.setuptools.package-data]
+torch_structracker = ["py.typed"]
 
 [tool.pytest.ini_options]
 addopts = [

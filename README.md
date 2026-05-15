@@ -1,4 +1,4 @@
-# torch-structracker
+# torch-weighttracker
 
 Tools for analyzing, tracking, and pruning structured sparsity in PyTorch
 models.
@@ -31,5 +31,5 @@ ruff format --check .
 ## Smoke Tests
 
 ```bash
-python -c "from torch_structracker.structure_tracker import StructureTracker; print(StructureTracker)"
+python -c "from torch_weighttracker.weight_tracker import WeightTracker; print(WeightTracker)"
 ```

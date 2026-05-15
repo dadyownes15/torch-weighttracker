@@ -1,7 +1,7 @@
 import torch
 
-from torch_structracker.operations import WeightOperationType
-from torch_structracker.operations import mha
+from torch_weighttracker.operations import WeightOperationType
+from torch_weighttracker.operations import mha
 
 
 def test_fused_qkv_source_operation_returns_reduced_source_rows():

@@ -8,27 +8,18 @@ import torch
 import torch.nn as nn
 
 from tests.test_calculation_specs import _model_and_groups
-from torch_structracker.calculations import CalcType
-from torch_structracker.canonical_units import canonicalize_groups
-from torch_structracker.regularizers import RegularizerType
-from torch_structracker.regularizers.group_lasso import GroupLasso
-from torch_structracker.structure_tracker import StructureTracker
-from torch_structracker.torch_pruning.pruner.function import (
+from torch_weighttracker.calculations import CalcType
+from torch_weighttracker.canonical_units import canonicalize_groups
+from torch_weighttracker.regularizers import RegularizerType
+from torch_weighttracker.regularizers.group_lasso import GroupLasso
+from torch_weighttracker.weight_tracker import WeightTracker
+from torch_weighttracker.torch_pruning.pruner.function import (
     prune_batchnorm_out_channels,
     prune_conv_in_channels,
     prune_conv_out_channels,
     prune_linear_in_channels,
     prune_linear_out_channels,
 )
-
-
-class TensorCalculation(nn.Module):
-    def __init__(self, value: torch.Tensor) -> None:
-        super().__init__()
-        self.register_buffer("value", value)
-
-    def forward(self, *args) -> torch.Tensor:
-        return self.value
 
 
 class ParameterCalculation(nn.Module):
@@ -38,21 +29,6 @@ class ParameterCalculation(nn.Module):
 
     def forward(self) -> torch.Tensor:
         return self.value
-
-
-class UnitsToGroupCalculation(nn.Module):
-    def __init__(self, group_sizes: tuple[int, ...]) -> None:
-        super().__init__()
-        self.group_sizes = tuple(int(size) for size in group_sizes)
-
-    def forward(self, unit_values: torch.Tensor) -> torch.Tensor:
-        values = []
-        start = 0
-        for size in self.group_sizes:
-            stop = start + size
-            values.append(unit_values[start:stop].sum())
-            start = stop
-        return torch.stack(values)
 
 
 class FakeGroup:
@@ -71,17 +47,19 @@ def _member(module: nn.Module, handler, indices: tuple[int, ...]):
     )
 
 
-def test_group_lasso_direct_formula_and_l2_gradients() -> None:
+def test_group_lasso_declares_param_unit_and_l2_dependencies() -> None:
+    assert GroupLasso.required_calculations == (
+        CalcType.PARAM_PR_UNIT,
+        CalcType.L2_NORM_PR_UNIT,
+    )
+
+
+def test_group_lasso_direct_formula_and_param_and_l2_gradients() -> None:
+    param_pr_unit = ParameterCalculation(torch.tensor([3.0, 4.0, 3.0, 2.0]))
     l2_norm_pr_unit = ParameterCalculation(torch.tensor([5.0, 7.0, 11.0, 13.0]))
     regularizer = GroupLasso(
         {
-            CalcType.UNIT_ACTIVE_MASK: TensorCalculation(
-                torch.tensor([1.0, 0.0, 1.0, 1.0])
-            ),
-            CalcType.UNITS_TO_GROUP: UnitsToGroupCalculation((3, 1)),
-            CalcType.BASELINE_GROUP_SIZES: TensorCalculation(torch.tensor([3.0, 1.0])),
-            CalcType.GROUP_CHANGE_EFFECT: TensorCalculation(torch.tensor([10.0, 4.0])),
-            CalcType.GROUP_SIZES: TensorCalculation(torch.tensor([3, 1])),
+            CalcType.PARAM_PR_UNIT: param_pr_unit,
             CalcType.L2_NORM_PR_UNIT: l2_norm_pr_unit,
         }
     )
@@ -89,10 +67,34 @@ def test_group_lasso_direct_formula_and_l2_gradients() -> None:
     loss = regularizer()
     loss.backward()
 
-    torch.testing.assert_close(loss.detach(), torch.tensor(-230.0))
+    expected_loss = (
+        torch.sqrt(torch.tensor(3.0)) * 5.0
+        + 2.0 * 7.0
+        + torch.sqrt(torch.tensor(3.0)) * 11.0
+        + torch.sqrt(torch.tensor(2.0)) * 13.0
+    )
+    torch.testing.assert_close(loss.detach(), expected_loss)
+    torch.testing.assert_close(
+        param_pr_unit.value.grad,
+        torch.tensor(
+            [
+                5.0 / (2.0 * torch.sqrt(torch.tensor(3.0))),
+                7.0 / 4.0,
+                11.0 / (2.0 * torch.sqrt(torch.tensor(3.0))),
+                13.0 / (2.0 * torch.sqrt(torch.tensor(2.0))),
+            ]
+        ),
+    )
     torch.testing.assert_close(
         l2_norm_pr_unit.value.grad,
-        torch.tensor([-10.0, -10.0, -10.0, 0.0]),
+        torch.tensor(
+            [
+                torch.sqrt(torch.tensor(3.0)),
+                2.0,
+                torch.sqrt(torch.tensor(3.0)),
+                torch.sqrt(torch.tensor(2.0)),
+            ]
+        ),
     )
 
 
@@ -103,13 +105,13 @@ def test_group_lasso_requires_explicit_calculations() -> None:
 
 def test_group_lasso_linear_chain_exact_values_and_gradients() -> None:
     model, groups = _model_and_groups()
-    tracker = StructureTracker(model, groups=groups)
+    tracker = WeightTracker(model, groups=groups)
 
     expected_l2 = torch.tensor(
         [
-            5.0,
+            torch.sqrt(torch.tensor(17.0)),
             0.0,
-            torch.sqrt(torch.tensor(13.0)) + 6.0,
+            7.0,
             torch.sqrt(torch.tensor(52.0)),
         ]
     )
@@ -120,6 +122,7 @@ def test_group_lasso_linear_chain_exact_values_and_gradients() -> None:
         expected_baseline_group_sizes=torch.tensor([3.0, 1.0]),
         expected_group_change_effect=torch.tensor([3.0, 3.0]),
         expected_group_sizes=torch.tensor([3, 1]),
+        expected_param_pr_unit=torch.tensor([3.0, 0.0, 3.0, 2.0]),
         expected_l2_norm_pr_unit=expected_l2,
     )
 
@@ -127,7 +130,9 @@ def test_group_lasso_linear_chain_exact_values_and_gradients() -> None:
     loss = regularizer()
     loss.backward()
 
-    expected_loss = -3.0 * (11.0 + torch.sqrt(torch.tensor(13.0)))
+    expected_loss = torch.sqrt(torch.tensor(3.0)) * (
+        torch.sqrt(torch.tensor(17.0)) + 7.0
+    ) + torch.sqrt(torch.tensor(2.0)) * torch.sqrt(torch.tensor(52.0))
     torch.testing.assert_close(loss.detach(), expected_loss)
     assert torch.isfinite(model.fc1.weight.grad).all()
     assert torch.isfinite(model.fc2.weight.grad).all()
@@ -135,18 +140,36 @@ def test_group_lasso_linear_chain_exact_values_and_gradients() -> None:
         model.fc1.weight.grad,
         torch.tensor(
             [
-                [-3.0, 0.0],
+                [
+                    torch.sqrt(torch.tensor(3.0)) / torch.sqrt(torch.tensor(17.0)),
+                    0.0,
+                ],
                 [0.0, 0.0],
                 [
-                    -6.0 / torch.sqrt(torch.tensor(13.0)),
-                    -9.0 / torch.sqrt(torch.tensor(13.0)),
+                    2.0 * torch.sqrt(torch.tensor(3.0)) / 7.0,
+                    3.0 * torch.sqrt(torch.tensor(3.0)) / 7.0,
                 ],
             ]
         ),
     )
     torch.testing.assert_close(
         model.fc2.weight.grad,
-        torch.tensor([[-3.0, 0.0, -3.0]]),
+        torch.tensor(
+            [
+                [
+                    4.0 * torch.sqrt(torch.tensor(3.0))
+                    / torch.sqrt(torch.tensor(17.0))
+                    + 4.0
+                    * torch.sqrt(torch.tensor(2.0))
+                    / torch.sqrt(torch.tensor(52.0)),
+                    0.0,
+                    6.0 * torch.sqrt(torch.tensor(3.0)) / 7.0
+                    + 6.0
+                    * torch.sqrt(torch.tensor(2.0))
+                    / torch.sqrt(torch.tensor(52.0)),
+                ]
+            ]
+        ),
     )
 
 
@@ -177,7 +200,7 @@ def test_group_lasso_conv_bn_chain_exact_values_and_gradients() -> None:
             ),
         )
     )
-    tracker = StructureTracker(model, groups=groups)
+    tracker = WeightTracker(model, groups=groups)
 
     _assert_group_lasso_calculations(
         tracker,
@@ -186,27 +209,62 @@ def test_group_lasso_conv_bn_chain_exact_values_and_gradients() -> None:
         expected_baseline_group_sizes=torch.tensor([2.0]),
         expected_group_change_effect=torch.tensor([4.0]),
         expected_group_sizes=torch.tensor([2]),
-        expected_l2_norm_pr_unit=torch.tensor([11.0, 0.0]),
+        expected_param_pr_unit=torch.tensor([3.0, 0.0]),
+        expected_l2_norm_pr_unit=torch.tensor([torch.sqrt(torch.tensor(45.0)), 0.0]),
     )
 
     loss = tracker.create_regularizer(RegularizerType.GROUP_LASSO)()
     loss.backward()
 
-    torch.testing.assert_close(loss.detach(), torch.tensor(-44.0))
+    torch.testing.assert_close(
+        loss.detach(),
+        torch.sqrt(torch.tensor(3.0)) * torch.sqrt(torch.tensor(45.0)),
+    )
     assert torch.isfinite(model.conv1.weight.grad).all()
     assert torch.isfinite(model.bn1.weight.grad).all()
     assert torch.isfinite(model.conv2.weight.grad).all()
     torch.testing.assert_close(
         model.conv1.weight.grad,
-        torch.tensor([[[[-4.0]]], [[[0.0]]]]),
+        torch.tensor(
+            [
+                [
+                    [
+                        [
+                            2.0
+                            * torch.sqrt(torch.tensor(3.0))
+                            / torch.sqrt(torch.tensor(45.0))
+                        ]
+                    ]
+                ],
+                [[[0.0]]],
+            ]
+        ),
     )
     torch.testing.assert_close(
         model.bn1.weight.grad,
-        torch.tensor([-4.0, 0.0]),
+        torch.tensor(
+            [
+                4.0 * torch.sqrt(torch.tensor(3.0)) / torch.sqrt(torch.tensor(45.0)),
+                0.0,
+            ]
+        ),
     )
     torch.testing.assert_close(
         model.conv2.weight.grad,
-        torch.tensor([[[[-4.0]], [[0.0]]]]),
+        torch.tensor(
+            [
+                [
+                    [
+                        [
+                            5.0
+                            * torch.sqrt(torch.tensor(3.0))
+                            / torch.sqrt(torch.tensor(45.0))
+                        ]
+                    ],
+                    [[0.0]],
+                ]
+            ]
+        ),
     )
 
 
@@ -231,11 +289,12 @@ class QKVGroupLassoCase:
     expected_baseline_group_sizes: torch.Tensor
     expected_group_change_effect: torch.Tensor
     expected_group_sizes: torch.Tensor
+    expected_param_pr_unit: torch.Tensor
     expected_l2_norm_pr_unit: torch.Tensor
     expected_loss: torch.Tensor
     expected_qkv_grad_active_rows: tuple[int, ...]
     expected_proj_grad_active_cols: tuple[int, ...]
-    expected_grad_value: float
+    expected_grad_value: torch.Tensor | float
 
 
 QKV_GROUP_LASSO_CASES = (
@@ -249,11 +308,12 @@ QKV_GROUP_LASSO_CASES = (
         expected_baseline_group_sizes=torch.tensor([4.0]),
         expected_group_change_effect=torch.tensor([16.0]),
         expected_group_sizes=torch.tensor([4]),
-        expected_l2_norm_pr_unit=torch.tensor([8.0, 0.0, 8.0, 8.0]),
-        expected_loss=torch.tensor(-384.0),
+        expected_param_pr_unit=torch.tensor([16.0, 0.0, 16.0, 16.0]),
+        expected_l2_norm_pr_unit=torch.tensor([4.0, 0.0, 4.0, 4.0]),
+        expected_loss=torch.tensor(48.0),
         expected_qkv_grad_active_rows=(0, 2, 3, 4, 6, 7, 8, 10, 11),
         expected_proj_grad_active_cols=(0, 2, 3),
-        expected_grad_value=-8.0,
+        expected_grad_value=1.0,
     ),
     QKVGroupLassoCase(
         name="head",
@@ -265,11 +325,12 @@ QKV_GROUP_LASSO_CASES = (
         expected_baseline_group_sizes=torch.tensor([2.0]),
         expected_group_change_effect=torch.tensor([32.0]),
         expected_group_sizes=torch.tensor([2]),
-        expected_l2_norm_pr_unit=torch.tensor([16.0, 0.0]),
-        expected_loss=torch.tensor(-512.0),
+        expected_param_pr_unit=torch.tensor([32.0, 0.0]),
+        expected_l2_norm_pr_unit=torch.tensor([torch.sqrt(torch.tensor(32.0)), 0.0]),
+        expected_loss=torch.tensor(32.0),
         expected_qkv_grad_active_rows=(0, 1, 4, 5, 8, 9),
         expected_proj_grad_active_cols=(0, 1),
-        expected_grad_value=-16.0,
+        expected_grad_value=1.0,
     ),
     QKVGroupLassoCase(
         name="head_dim",
@@ -281,11 +342,12 @@ QKV_GROUP_LASSO_CASES = (
         expected_baseline_group_sizes=torch.tensor([2.0]),
         expected_group_change_effect=torch.tensor([32.0]),
         expected_group_sizes=torch.tensor([2]),
-        expected_l2_norm_pr_unit=torch.tensor([16.0, 0.0]),
-        expected_loss=torch.tensor(-512.0),
+        expected_param_pr_unit=torch.tensor([32.0, 0.0]),
+        expected_l2_norm_pr_unit=torch.tensor([torch.sqrt(torch.tensor(32.0)), 0.0]),
+        expected_loss=torch.tensor(32.0),
         expected_qkv_grad_active_rows=(0, 2, 4, 6, 8, 10),
         expected_proj_grad_active_cols=(0, 2),
-        expected_grad_value=-16.0,
+        expected_grad_value=1.0,
     ),
 )
 
@@ -319,7 +381,7 @@ def test_group_lasso_qkv_projection_exact_values_and_gradients(
     assert tuple(group.length for group in groups) == tuple(
         int(size) for size in case.expected_group_sizes
     )
-    tracker = StructureTracker(
+    tracker = WeightTracker(
         model,
         groups=groups,
         num_heads={model.qkv: 2},
@@ -334,6 +396,7 @@ def test_group_lasso_qkv_projection_exact_values_and_gradients(
         expected_baseline_group_sizes=case.expected_baseline_group_sizes,
         expected_group_change_effect=case.expected_group_change_effect,
         expected_group_sizes=case.expected_group_sizes,
+        expected_param_pr_unit=case.expected_param_pr_unit,
         expected_l2_norm_pr_unit=case.expected_l2_norm_pr_unit,
     )
 
@@ -360,22 +423,24 @@ def test_group_lasso_qkv_projection_exact_values_and_gradients(
 
 
 def _assert_group_lasso_calculations(
-    tracker: StructureTracker,
+    tracker: WeightTracker,
     *,
     expected_unit_active_mask: torch.Tensor,
     expected_active_pr_group: torch.Tensor,
     expected_baseline_group_sizes: torch.Tensor,
     expected_group_change_effect: torch.Tensor,
     expected_group_sizes: torch.Tensor,
+    expected_param_pr_unit: torch.Tensor,
     expected_l2_norm_pr_unit: torch.Tensor,
 ) -> None:
     unit_active_mask = tracker.get_calculation(CalcType.UNIT_ACTIVE_MASK)()
     active_pr_group = tracker.get_calculation(CalcType.UNITS_TO_GROUP)(
         unit_active_mask
     )
-    baseline_group_sizes = tracker.get_calculation(CalcType.BASELINE_GROUP_SIZES)()
+    baseline_group_sizes = tracker.get_calculation(CalcType.INIT_UNIT_PR_GROUP_COUNT)()
     group_change_effect = tracker.get_calculation(CalcType.GROUP_CHANGE_EFFECT)()
     group_sizes = tracker.get_calculation(CalcType.GROUP_SIZES)()
+    param_pr_unit = tracker.get_calculation(CalcType.PARAM_PR_UNIT)()
     l2_norm_pr_unit = tracker.get_calculation(CalcType.L2_NORM_PR_UNIT)()
 
     torch.testing.assert_close(unit_active_mask, expected_unit_active_mask)
@@ -383,6 +448,7 @@ def _assert_group_lasso_calculations(
     torch.testing.assert_close(baseline_group_sizes, expected_baseline_group_sizes)
     torch.testing.assert_close(group_change_effect, expected_group_change_effect)
     torch.testing.assert_close(group_sizes, expected_group_sizes)
+    torch.testing.assert_close(param_pr_unit, expected_param_pr_unit)
     torch.testing.assert_close(l2_norm_pr_unit, expected_l2_norm_pr_unit)
 
 

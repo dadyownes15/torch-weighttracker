@@ -4,12 +4,12 @@ import pytest
 import torch
 import torch.nn as nn
 
-import torch_structracker.calculations.calculations as calc_impl
-from torch_structracker.calculations import CalcType
-from torch_structracker.calculations.cached_calc import CachedCalculation
-from torch_structracker.canonical_units import canonicalize_groups
-from torch_structracker.structure_tracker import StructureTracker
-from torch_structracker.torch_pruning.pruner.function import (
+import torch_weighttracker.calculations.calculations as calc_impl
+from torch_weighttracker.calculations import CalcType
+from torch_weighttracker.calculations.cached_calc import CachedCalculation
+from torch_weighttracker.canonical_units import canonicalize_groups
+from torch_weighttracker.weight_tracker import WeightTracker
+from torch_weighttracker.torch_pruning.pruner.function import (
     prune_linear_in_channels,
     prune_linear_out_channels,
 )
@@ -75,16 +75,16 @@ def _model_and_groups():
     return model, canonicalize_groups((hidden_group, output_group))
 
 
-def test_structure_tracker_builds_public_calculations_from_specs() -> None:
+def test_weight_tracker_builds_public_calculations_from_specs() -> None:
     model, groups = _model_and_groups()
-    tracker = StructureTracker(model, groups=groups)
+    tracker = WeightTracker(model, groups=groups)
 
     calculations = tracker.ensure_calculations(
         (
             CalcType.ACTIVE_UNITS,
             CalcType.UNIT_ACTIVE_MASK,
             CalcType.UNITS_TO_GROUP,
-            CalcType.BASELINE_GROUP_SIZES,
+            CalcType.INIT_UNIT_PR_GROUP_COUNT,
             CalcType.GROUP_CHANGE_EFFECT,
             CalcType.GROUP_SIZES,
             CalcType.L2_NORM_PR_UNIT,
@@ -95,7 +95,7 @@ def test_structure_tracker_builds_public_calculations_from_specs() -> None:
     assert tracker.get_calculation(CalcType.UNIT_ACTIVE_MASK) is calculations[
         CalcType.UNIT_ACTIVE_MASK
     ]
-    assert isinstance(calculations[CalcType.BASELINE_GROUP_SIZES], CachedCalculation)
+    assert isinstance(calculations[CalcType.INIT_UNIT_PR_GROUP_COUNT], CachedCalculation)
     assert isinstance(calculations[CalcType.GROUP_CHANGE_EFFECT], CachedCalculation)
     assert isinstance(calculations[CalcType.GROUP_SIZES], CachedCalculation)
     assert not isinstance(calculations[CalcType.ACTIVE_UNITS], CachedCalculation)
@@ -113,7 +113,7 @@ def test_structure_tracker_builds_public_calculations_from_specs() -> None:
         torch.tensor([6.0, 4.0]),
     )
     torch.testing.assert_close(
-        calculations[CalcType.BASELINE_GROUP_SIZES](),
+        calculations[CalcType.INIT_UNIT_PR_GROUP_COUNT](),
         torch.tensor([3.0, 1.0]),
     )
     torch.testing.assert_close(
@@ -128,9 +128,9 @@ def test_structure_tracker_builds_public_calculations_from_specs() -> None:
         calculations[CalcType.L2_NORM_PR_UNIT](),
         torch.tensor(
             [
-                5.0,
+                torch.sqrt(torch.tensor(17.0)),
                 0.0,
-                torch.sqrt(torch.tensor(13.0)) + 6.0,
+                7.0,
                 torch.sqrt(torch.tensor(52.0)),
             ]
         ),
@@ -146,7 +146,7 @@ def test_module_axis_and_bitrates_share_weighted_module_order() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = StructureTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
 
     calculations = tracker.ensure_calculations(
         (
@@ -188,7 +188,7 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
         num_heads={model.qkv: 2},
         prune_dim=True,
     )
-    tracker = StructureTracker(
+    tracker = WeightTracker(
         model,
         example_inputs=torch.randn(1, 4),
         groups=groups,
@@ -233,12 +233,12 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
 
 def test_missing_groups_fail_for_group_required_calculations() -> None:
     with pytest.raises(ValueError, match="requires dependency groups"):
-        StructureTracker(TinyLinearChain()).get_calculation(CalcType.UNIT_ACTIVE_MASK)
+        WeightTracker(TinyLinearChain()).get_calculation(CalcType.UNIT_ACTIVE_MASK)
 
 
 def test_circular_calculation_dependencies_fail_clearly(monkeypatch) -> None:
     model, groups = _model_and_groups()
-    tracker = StructureTracker(model, groups=groups)
+    tracker = WeightTracker(model, groups=groups)
 
     monkeypatch.setitem(
         calc_impl.CALCULATION_SPECS,

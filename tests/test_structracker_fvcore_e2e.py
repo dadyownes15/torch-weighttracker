@@ -6,10 +6,10 @@ import torch.nn as nn
 from torch import Tensor
 
 from tests.fixtures_models import TinyTransformerClassifier
-from torch_structracker import StructureTracker
-from torch_structracker.calculations import CalcType
-from torch_structracker.trackers import TrackerType
-from torch_structracker.torch_pruning.pruner.function import (
+from torch_weighttracker import WeightTracker
+from torch_weighttracker.calculations import CalcType
+from torch_weighttracker.trackers import TrackerType
+from torch_weighttracker.torch_pruning.pruner.function import (
     prune_batchnorm_in_channels,
     prune_batchnorm_out_channels,
     prune_conv_in_channels,
@@ -92,7 +92,7 @@ def _module_names(model: nn.Module) -> dict[nn.Module, str]:
 
 
 def _group_containing(
-    tracker: StructureTracker,
+    tracker: WeightTracker,
     module_name: str,
     handler,
 ):
@@ -104,7 +104,7 @@ def _group_containing(
     raise AssertionError(f"No canonical group contains {module_name}.")
 
 
-def _axis_counts_by_module(tracker: StructureTracker) -> dict[str, torch.Tensor]:
+def _axis_counts_by_module(tracker: WeightTracker) -> dict[str, torch.Tensor]:
     calculations = tracker.ensure_calculations(
         (CalcType.UNIT_ACTIVE_MASK, CalcType.UNITS_TO_MODULE_AXIS)
     )
@@ -231,7 +231,7 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
     model.stem_conv.weight_bitrate = 4
     model.block1.conv1.bitrate = 6
     example_inputs = torch.randn(1, 3, 32, 32)
-    tracker = StructureTracker(model, example_inputs)
+    tracker = WeightTracker(model, example_inputs)
 
     metrics = tracker.create_tracker(TrackerType.STRUCTURED_BOPS).track()
     bitrates = tracker.get_calculation(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
@@ -274,7 +274,7 @@ def _linear_flops(
 def test_resnet_residual_prune_axis_counts_match_pruned_fvcore_modules() -> None:
     model = TinyResNetClassifier().eval()
     example_inputs = torch.randn(1, 3, 16, 16)
-    tracker = StructureTracker(
+    tracker = WeightTracker(
         model,
         example_inputs=example_inputs,
         root_module_types=[nn.Conv2d, nn.Linear],
@@ -314,7 +314,7 @@ def test_resnet_residual_prune_axis_counts_match_pruned_fvcore_modules() -> None
 def test_transformer_mlp_prune_axis_counts_match_pruned_fvcore_modules() -> None:
     model = TinyTransformerClassifier().eval()
     token_ids = torch.randint(0, 32, (1, 8))
-    tracker = StructureTracker(
+    tracker = WeightTracker(
         model,
         example_inputs=token_ids,
         root_module_types=[nn.Linear],
@@ -343,7 +343,7 @@ def test_transformer_mlp_prune_axis_counts_match_pruned_fvcore_modules() -> None
 def test_transformer_attention_head_prune_matches_pruned_fvcore_modules() -> None:
     model = TinyTransformerClassifier().eval()
     token_ids = torch.randint(0, 32, (1, 8))
-    tracker = StructureTracker(
+    tracker = WeightTracker(
         model,
         example_inputs=token_ids,
         root_module_types=[nn.MultiheadAttention, nn.Linear],

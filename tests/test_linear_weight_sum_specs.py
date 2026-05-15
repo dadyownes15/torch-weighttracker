@@ -1,7 +1,7 @@
 """ import torch
 import torch.nn as nn
 
-from torch_structracker.torch_pruning.dependency import DependencyGraph
+from torch_weighttracker.torch_pruning.dependency import DependencyGraph
 
 
 class TwoLayerLinear(nn.Module):

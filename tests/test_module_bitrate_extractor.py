@@ -3,7 +3,7 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 
-from torch_structracker.extractors.codeq_bitrate_extractor import (
+from torch_weighttracker.extractors.codeq_bitrate_extractor import (
     ModuleBitrateExtractor,
 )
 

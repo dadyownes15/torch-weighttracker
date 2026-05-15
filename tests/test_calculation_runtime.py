@@ -2,18 +2,16 @@ import pytest
 import torch
 import torch.nn as nn
 
-from torch_structracker.calculations import (
+from torch_weighttracker.calculations import (
     BaseCalculation,
     CalcType,
-    create_calculation,
-    create_pipeline_calculation,
+    PipelineCalc,
+    ReductionCalc,
 )
-from torch_structracker.calculations.active_params_pr_unit import ActiveParamsPrUnit
-from torch_structracker.calculations.reduction_calc import MappedReductionCalculation
-from torch_structracker.canonical_units import CanonicalUnitGroup, UnitKind
-from torch_structracker.extractors.extractor import TensorSpec, ValueTensorRef
-from torch_structracker.plans.mapping_plan import create_unit_to_group_acc
-from torch_structracker.reductions.builder import (
+from torch_weighttracker.canonical_units import CanonicalUnitGroup, UnitKind
+from torch_weighttracker.extractors.extractor import TensorSpec, ValueTensorRef
+from torch_weighttracker.plans.mapping_plan import create_unit_to_group_acc
+from torch_weighttracker.reductions.builder import (
     FullSelection,
     IndexSelection,
     ReductionMapping,
@@ -21,10 +19,10 @@ from torch_structracker.reductions.builder import (
     ReductionRecord,
     SegmentSelection,
 )
-from torch_structracker.reductions.ops import IdentityTensorReduction
-from torch_structracker.regularizers.group_lasso import GroupLasso
-from torch_structracker.trackers.base import BaseTracker
-from torch_structracker.trackers.structured_bops import StructuredBOPs
+from torch_weighttracker.reductions.ops import IdentityTensorReduction
+from torch_weighttracker.regularizers.group_lasso import GroupLasso
+from torch_weighttracker.trackers.base import BaseTracker
+from torch_weighttracker.trackers.structured_bops import StructuredBOPs
 
 
 class TensorOp(nn.Module):
@@ -131,7 +129,7 @@ def _unit_to_group_plan(input_value: torch.Tensor):
 def test_mapped_calculation_allocates_fresh_outputs_and_keeps_index_buffers() -> None:
     builder = ReductionPlanBuilder()
     builder.add(_record(TensorOp((1.0, 2.0)), FullSelection(), IndexSelection((0, 1))))
-    calculation = MappedReductionCalculation(builder.finalize())
+    calculation = ReductionCalc(builder.finalize())
 
     index_ptrs = tuple(index.data_ptr() for index in calculation.destination_indices)
     first = calculation()
@@ -146,7 +144,7 @@ def test_mapped_calculation_allocates_fresh_outputs_and_keeps_index_buffers() ->
 
 def test_pipeline_calculation_allocates_fresh_outputs_and_keeps_index_buffers() -> None:
     input_value = torch.tensor([1.0, 2.0, 3.0, 4.0])
-    calculation = create_pipeline_calculation(_unit_to_group_plan(input_value))
+    calculation = PipelineCalc(_unit_to_group_plan(input_value))
     buffer_ptrs = {
         name: buffer.data_ptr()
         for name, buffer in calculation.named_buffers()
@@ -171,7 +169,7 @@ def test_mapped_calculation_propagates_gradients_through_index_add() -> None:
     op = ParameterOp((1.0, 2.0, 3.0))
     builder = ReductionPlanBuilder()
     builder.add(_record(op, FullSelection(), IndexSelection((0, 0, 1))))
-    calculation = MappedReductionCalculation(builder.finalize())
+    calculation = ReductionCalc(builder.finalize())
 
     loss = calculation().square().sum()
     loss.backward()
@@ -181,27 +179,12 @@ def test_mapped_calculation_propagates_gradients_through_index_add() -> None:
 
 def test_pipeline_calculation_propagates_gradients_through_gather_index_add() -> None:
     input_value = torch.tensor([1.0, 2.0, 3.0, 4.0], requires_grad=True)
-    calculation = create_pipeline_calculation(_unit_to_group_plan(input_value))
+    calculation = PipelineCalc(_unit_to_group_plan(input_value))
 
     loss = calculation(input_value).square().sum()
     loss.backward()
 
     torch.testing.assert_close(input_value.grad, torch.tensor([6.0, 6.0, 14.0, 14.0]))
-
-
-def test_active_params_pr_unit_is_grad_compatible_when_input_is_grad_tensor() -> None:
-    input_value = torch.tensor([1.0, 2.0, 3.0, 4.0], requires_grad=True)
-    calculation = ActiveParamsPrUnit(
-        unit_to_group_acc=create_pipeline_calculation(_unit_to_group_plan(input_value)),
-        unit_active_mask=StaticCalculation(input_value),
-        baseline_group_size=torch.tensor([2.0, 2.0]),
-        group_change_effect=torch.tensor([10.0, 4.0]),
-        group_lengths=torch.tensor([2, 2]),
-    )
-
-    calculation().sum().backward()
-
-    torch.testing.assert_close(input_value.grad, torch.tensor([20.0, 20.0, 8.0, 8.0]))
 
 
 class GradModeTracker(BaseTracker):
@@ -230,43 +213,35 @@ def test_tracker_track_runs_compute_and_metric_under_no_grad() -> None:
     assert tracker.metric_grad_enabled is False
 
 
-def test_create_calculation_constructs_l2_norm_pr_unit() -> None:
+def test_reduction_calc_constructs_l2_norm_pr_unit() -> None:
     builder = ReductionPlanBuilder()
     builder.add(_record(TensorOp((1.0, 2.0)), FullSelection(), SegmentSelection(0, 2)))
 
-    calculation = create_calculation(
-        CalcType.L2_NORM_PR_UNIT,
+    calculation = ReductionCalc(
         builder.finalize(),
+        calculation_type=CalcType.L2_NORM_PR_UNIT,
     )
 
-    assert isinstance(calculation, MappedReductionCalculation)
+    assert isinstance(calculation, ReductionCalc)
     assert calculation.calculation_type == CalcType.L2_NORM_PR_UNIT
 
 
-def test_group_lasso_multiplies_active_params_and_l2_norms() -> None:
-    unit_active_mask = StaticCalculation(torch.tensor([1.0, 0.0, 1.0, 1.0]))
-    unit_to_group = create_pipeline_calculation(
-        _unit_to_group_plan(torch.tensor([1.0, 0.0, 1.0, 1.0]))
-    )
+def test_group_lasso_squares_param_pr_unit_and_multiplies_l2_norms() -> None:
     l2_norm_pr_unit = ParameterCalculation(torch.tensor([5.0, 7.0, 11.0, 13.0]))
     regularizer = GroupLasso(
         {
+            CalcType.PARAM_PR_UNIT: StaticCalculation(torch.tensor([3.0, 0.0, 3.0, 2.0])),
             CalcType.L2_NORM_PR_UNIT: l2_norm_pr_unit,
-            CalcType.UNITS_TO_GROUP: unit_to_group,
-            CalcType.UNIT_ACTIVE_MASK: unit_active_mask,
-            CalcType.BASELINE_GROUP_SIZES: StaticCalculation(torch.tensor([2.0, 2.0])),
-            CalcType.GROUP_CHANGE_EFFECT: StaticCalculation(torch.tensor([10.0, 4.0])),
-            CalcType.GROUP_SIZES: StaticCalculation(torch.tensor([2, 2])),
         }
     )
 
     loss = regularizer()
     loss.backward()
 
-    torch.testing.assert_close(loss.detach(), torch.tensor(-120.0))
+    torch.testing.assert_close(loss.detach(), torch.tensor(196.0))
     torch.testing.assert_close(
         l2_norm_pr_unit.value.grad,
-        torch.tensor([-10.0, -10.0, 0.0, 0.0]),
+        torch.tensor([9.0, 0.0, 9.0, 4.0]),
     )
 
 

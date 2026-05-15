@@ -1,11 +1,11 @@
 import torch
 import torch.nn as nn
 
-from torch_structracker.calculations import CalcType, MappedReductionCalculation
-from torch_structracker.canonical_units import canonicalize_groups
-from torch_structracker.operations import WeightOperationType
-from torch_structracker.plans.unit_weight_operation_plan import create_group_member_plan
-from torch_structracker.torch_pruning.dependency import DependencyGraph
+from torch_weighttracker.calculations import CalcType, ReductionCalc
+from torch_weighttracker.canonical_units import canonicalize_groups
+from torch_weighttracker.operations import WeightOperationType
+from torch_weighttracker.plans.unit_weight_operation_plan import create_group_member_plan
+from torch_weighttracker.torch_pruning.dependency import DependencyGraph
 
 
 class TinyMLP(nn.Module):
@@ -53,7 +53,7 @@ def test_param_unit_calculator_counts_linear_units_for_tiny_mlp():
         WeightOperationType.SUM,
     )
 
-    calculator = MappedReductionCalculation(
+    calculator = ReductionCalc(
         plan,
         calculation_type=CalcType.STRUCTURED_UNIT_SUM,
     )

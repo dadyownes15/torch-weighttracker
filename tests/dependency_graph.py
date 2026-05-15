@@ -4,8 +4,8 @@ from __future__ import annotations
 import pytest
 import torch.nn as nn
 import torch 
-from torch_structracker.torch_pruning.dependency import DependencyGraph
-from torch_structracker.torch_pruning.pruner.function import LinearPruner, prune_linear_out_channels 
+from torch_weighttracker.torch_pruning.dependency import DependencyGraph
+from torch_weighttracker.torch_pruning.pruner.function import LinearPruner, prune_linear_out_channels 
 
 class simpleMLP(nn.Module):
     def __init__(self) -> None:

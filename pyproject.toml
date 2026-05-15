@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "torch-structracker"
+name = "torch-weighttracker"
 version = "0.1.0"
 description = "Tools for analyzing and tracking structured sparsity in PyTorch models."
 readme = "README.md"
@@ -39,15 +39,15 @@ dev = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/dadyownes15/torch-structracker"
-Issues = "https://github.com/dadyownes15/torch-structracker/issues"
+Homepage = "https://github.com/dadyownes15/torch-weighttracker"
+Issues = "https://github.com/dadyownes15/torch-weighttracker/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["torch_structracker*"]
+include = ["torch_weighttracker*"]
 
 [tool.setuptools.package-data]
-torch_structracker = ["py.typed"]
+torch_weighttracker = ["py.typed"]
 
 [tool.pytest.ini_options]
 addopts = [

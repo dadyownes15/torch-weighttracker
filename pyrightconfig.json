@@ -3,7 +3,7 @@
   "venv": ".venv",
   "pythonVersion": "3.12",
   "include": [
-    "torch_structracker",
+    "torch_weighttracker",
     "tests",
     "benchmarks"
   ],

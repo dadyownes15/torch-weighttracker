@@ -2,14 +2,13 @@ import pytest
 import torch
 import torch.nn as nn
 
-from torch_structracker.calculations import BaseCalculation
-from torch_structracker.calculations.active_params_pr_unit import ActiveParamsPrUnit
-from torch_structracker.calculations.reduction_calc import MappedReductionCalculation
-from torch_structracker.calculations.pipeline_calc import PipelineCalc
-from torch_structracker.canonical_units import CanonicalUnitGroup, UnitKind
-from torch_structracker.extractors.extractor import TensorSpec, ValueTensorRef
-from torch_structracker.plans.mapping_plan import create_unit_to_group_acc
-from torch_structracker.reductions.builder import (
+from torch_weighttracker.calculations import BaseCalculation
+from torch_weighttracker.calculations.reduction_calc import ReductionCalc
+from torch_weighttracker.calculations.pipeline_calc import PipelineCalc
+from torch_weighttracker.canonical_units import CanonicalUnitGroup, UnitKind
+from torch_weighttracker.extractors.extractor import TensorSpec, ValueTensorRef
+from torch_weighttracker.plans.mapping_plan import create_unit_to_group_acc
+from torch_weighttracker.reductions.builder import (
     FullSelection,
     IndexedEntry,
     IndexedGatherEntry,
@@ -20,7 +19,7 @@ from torch_structracker.reductions.builder import (
     SegmentEntry,
     SegmentSelection,
 )
-from torch_structracker.reductions.ops import IdentityTensorReduction
+from torch_weighttracker.reductions.ops import IdentityTensorReduction
 
 
 class MetadataOnlyOp:
@@ -540,7 +539,7 @@ def test_mapped_reduction_calculation_executes_all_runtime_entry_types() -> None
         )
     )
 
-    calculation = MappedReductionCalculation(builder.finalize())
+    calculation = ReductionCalc(builder.finalize())
 
     torch.testing.assert_close(
         calculation(),
@@ -630,96 +629,3 @@ def test_pipeline_calculation_accumulates_unit_values_to_compact_groups() -> Non
         torch.tensor([2.0, 1.0]),
     )
 
-
-def test_active_params_pr_unit_broadcasts_group_effect_to_units() -> None:
-    input_value = torch.tensor([1.0, 0.0, 1.0, 1.0, 0.0])
-    input_spec = TensorSpec(
-        shape=input_value.shape,
-        dtype=input_value.dtype,
-        device=input_value.device,
-    )
-    groups = (
-        CanonicalUnitGroup(
-            group_id=0,
-            offset=0,
-            length=3,
-            unit_kind=UnitKind.CHANNEL,
-            members=(),
-            raw_group=object(),
-        ),
-        CanonicalUnitGroup(
-            group_id=1,
-            offset=3,
-            length=2,
-            unit_kind=UnitKind.CHANNEL,
-            members=(),
-            raw_group=object(),
-        ),
-    )
-    unit_to_group_acc = PipelineCalc(
-        create_unit_to_group_acc(
-            groups,
-            input_tensor_ref=ValueTensorRef(value=input_value, spec=input_spec),
-            reduction_mapper=lambda _: IdentityTensorReduction(),
-        )
-    )
-    unit_active_mask = StaticCalculation(input_value)
-    calculation = ActiveParamsPrUnit(
-        unit_to_group_acc=unit_to_group_acc,
-        unit_active_mask=unit_active_mask,
-        baseline_group_size=torch.tensor([3.0, 2.0]),
-        group_change_effect=torch.tensor([10.0, 4.0]),
-        group_lengths=torch.tensor([3, 2]),
-    )
-
-    torch.testing.assert_close(
-        calculation(),
-        torch.tensor([-10.0, -10.0, -10.0, -4.0, -4.0]),
-    )
-    assert unit_active_mask.call_count == 1
-
-
-def test_active_params_pr_unit_handles_transformer_unit_kinds() -> None:
-    input_value = torch.tensor([1.0, 0.0, 1.0, 1.0, 0.0])
-    input_spec = TensorSpec(
-        shape=input_value.shape,
-        dtype=input_value.dtype,
-        device=input_value.device,
-    )
-    groups = (
-        CanonicalUnitGroup(
-            group_id=0,
-            offset=0,
-            length=2,
-            unit_kind=UnitKind.HEAD,
-            members=(),
-            raw_group=object(),
-        ),
-        CanonicalUnitGroup(
-            group_id=1,
-            offset=2,
-            length=3,
-            unit_kind=UnitKind.HEAD_DIM,
-            members=(),
-            raw_group=object(),
-        ),
-    )
-    unit_to_group_acc = PipelineCalc(
-        create_unit_to_group_acc(
-            groups,
-            input_tensor_ref=ValueTensorRef(value=input_value, spec=input_spec),
-            reduction_mapper=lambda _: IdentityTensorReduction(),
-        )
-    )
-    calculation = ActiveParamsPrUnit(
-        unit_to_group_acc=unit_to_group_acc,
-        unit_active_mask=StaticCalculation(input_value),
-        baseline_group_size=torch.tensor([2.0, 3.0]),
-        group_change_effect=torch.tensor([64.0, 8.0]),
-        group_lengths=torch.tensor([2, 3]),
-    )
-
-    torch.testing.assert_close(
-        calculation(),
-        torch.tensor([-64.0, -64.0, -8.0, -8.0, -8.0]),
-    )

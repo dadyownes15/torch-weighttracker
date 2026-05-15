@@ -226,7 +226,7 @@ def test_reduction_calc_constructs_l2_norm_pr_unit() -> None:
     assert calculation.calculation_type == CalcType.L2_NORM_PR_UNIT
 
 
-def test_group_lasso_squares_param_pr_unit_and_multiplies_l2_norms() -> None:
+def test_group_lasso_sqrt_weights_param_pr_unit_and_multiplies_l2_norms() -> None:
     l2_norm_pr_unit = ParameterCalculation(torch.tensor([5.0, 7.0, 11.0, 13.0]))
     regularizer = GroupLasso(
         {
@@ -238,10 +238,22 @@ def test_group_lasso_squares_param_pr_unit_and_multiplies_l2_norms() -> None:
     loss = regularizer()
     loss.backward()
 
-    torch.testing.assert_close(loss.detach(), torch.tensor(196.0))
+    expected_loss = (
+        torch.sqrt(torch.tensor(3.0)) * 5.0
+        + torch.sqrt(torch.tensor(3.0)) * 11.0
+        + torch.sqrt(torch.tensor(2.0)) * 13.0
+    )
+    torch.testing.assert_close(loss.detach(), expected_loss)
     torch.testing.assert_close(
         l2_norm_pr_unit.value.grad,
-        torch.tensor([9.0, 0.0, 9.0, 4.0]),
+        torch.tensor(
+            [
+                torch.sqrt(torch.tensor(3.0)),
+                0.0,
+                torch.sqrt(torch.tensor(3.0)),
+                torch.sqrt(torch.tensor(2.0)),
+            ]
+        ),
     )
 
 

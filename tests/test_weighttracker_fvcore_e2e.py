@@ -8,7 +8,6 @@ from torch import Tensor
 from tests.fixtures_models import TinyTransformerClassifier
 from torch_weighttracker import WeightTracker
 from torch_weighttracker.calculations import CalcType
-from torch_weighttracker.trackers import TrackerType
 from torch_weighttracker.torch_pruning.pruner.function import (
     prune_batchnorm_in_channels,
     prune_batchnorm_out_channels,
@@ -23,6 +22,7 @@ from torch_weighttracker.torch_pruning.pruner.function import (
     prune_multihead_attention_in_channels,
     prune_multihead_attention_out_channels,
 )
+from torch_weighttracker.trackers import TrackerType
 
 
 class TinyResNetBlock(nn.Module):
@@ -127,7 +127,11 @@ def _zero_group_unit(
         raw_member = member.member
         local_indices = [
             int(local_index)
-            for local_index, root_index in zip(raw_member.idxs, raw_member.root_idxs)
+            for local_index, root_index in zip(
+                raw_member.idxs,
+                raw_member.root_idxs,
+                strict=True,
+            )
             if int(root_index) in roots
         ]
         if local_indices:

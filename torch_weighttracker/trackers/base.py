@@ -26,6 +26,16 @@ class BaseTracker(nn.Module, ABC):
     ) -> CalculationContext | None:
         return None
 
+    @classmethod
+    def constructor_kwargs(
+        cls,
+        owner,
+        *,
+        context: CalculationContext | None = None,
+        **kwargs,
+    ) -> dict:
+        return kwargs
+
     def __init__(
         self,
         calculations: Mapping[CalcType, nn.Module] | None = None,

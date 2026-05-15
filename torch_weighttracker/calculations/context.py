@@ -1,12 +1,16 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import torch
 import torch.nn as nn
 
 from torch_weighttracker.canonical_units import CanonicalUnitGroup
+
+if TYPE_CHECKING:
+    from torch_weighttracker.extractors.extractor import TensorSpec
 
 
 @dataclass(frozen=True)
@@ -18,6 +22,7 @@ class CalculationContext:
     weighted_modules: tuple[nn.Module, ...]
     weighted_module_index: Mapping[nn.Module, int]
     example_inputs: object | None = None
+    weighted_module_names: tuple[str, ...] = ()
 
 
 def calculation_dtype(ctx: CalculationContext) -> torch.dtype:
@@ -41,7 +46,7 @@ def calculation_device(ctx: CalculationContext) -> torch.device | str:
     return torch.device("cpu")
 
 
-def group_input_spec(ctx: CalculationContext) -> "TensorSpec":
+def group_input_spec(ctx: CalculationContext) -> TensorSpec:
     from torch_weighttracker.extractors.extractor import TensorSpec
 
     return TensorSpec(

@@ -5,12 +5,12 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "torch-weighttracker"
 version = "0.1.0"
-description = "Tools for analyzing and tracking structured sparsity in PyTorch models."
+description = "Tools for tracking structured weight sparsity in PyTorch models."
 readme = "README.md"
 requires-python = ">=3.10"
 license = "MIT"
 license-files = ["LICENSE"]
-keywords = ["pytorch", "torch", "tracking", "structured-sparsity", "pruning"]
+keywords = ["pytorch", "torch", "weights", "tracking", "structured-sparsity", "pruning"]
 classifiers = [
     "Development Status :: 2 - Pre-Alpha",
     "Intended Audience :: Developers",
@@ -28,6 +28,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+structured-bops = [
+    "fvcore",
+]
 dev = [
     "build>=1.2",
     "fvcore",
@@ -41,6 +44,7 @@ dev = [
 [project.urls]
 Homepage = "https://github.com/dadyownes15/torch-weighttracker"
 Issues = "https://github.com/dadyownes15/torch-weighttracker/issues"
+Repository = "https://github.com/dadyownes15/torch-weighttracker"
 
 [tool.setuptools.packages.find]
 where = ["."]
@@ -56,6 +60,7 @@ addopts = [
     "--ignore=tests/test_attention_axes_unit.py",
     "--ignore=tests/test_model_structured_sparsity.py",
     "--ignore=tests/test_sparsity_controller.py",
+    "--ignore=tests/ignored",
 ]
 pythonpath = ["."]
 testpaths = ["tests"]

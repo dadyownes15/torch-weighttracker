@@ -1,15 +1,74 @@
-"""Torch-Pruning: A framework for structural pruning of PyTorch models.
+"""Minimal vendored torch-pruning surface used by torch-weighttracker."""
 
-This package provides tools for structural pruning of deep neural networks,
-including dependency graph analysis and various pruning algorithms.
-"""
+from .dependency import (
+    INDEX_MAPPING_PLACEHOLDER,
+    MAX_RECURSION_DEPTH,
+    MAX_VALID_DIM,
+    Dependency,
+    DependencyGraph,
+    Group,
+    Node,
+)
+from .pruner.function import (
+    BasePruningFunc,
+    PrunerBox,
+    prune_batchnorm_in_channels,
+    prune_batchnorm_out_channels,
+    prune_conv_in_channels,
+    prune_conv_out_channels,
+    prune_depthwise_conv_in_channels,
+    prune_depthwise_conv_out_channels,
+    prune_embedding_in_channels,
+    prune_embedding_out_channels,
+    prune_groupnorm_in_channels,
+    prune_groupnorm_out_channels,
+    prune_instancenorm_in_channels,
+    prune_instancenorm_out_channels,
+    prune_layernorm_in_channels,
+    prune_layernorm_out_channels,
+    prune_linear_in_channels,
+    prune_linear_out_channels,
+    prune_multihead_attention_in_channels,
+    prune_multihead_attention_out_channels,
+    prune_parameter_in_channels,
+    prune_parameter_out_channels,
+    prune_prelu_in_channels,
+    prune_prelu_out_channels,
+)
 
-# Core imports
-from . import _helpers, utils
-from .dependency import *
-from .pruner import *
-from .pruner import importance
-from .serialization import save, load, state_dict, load_state_dict
+__all__ = [
+    "BasePruningFunc",
+    "Dependency",
+    "DependencyGraph",
+    "Group",
+    "INDEX_MAPPING_PLACEHOLDER",
+    "MAX_RECURSION_DEPTH",
+    "MAX_VALID_DIM",
+    "Node",
+    "PrunerBox",
+    "prune_batchnorm_in_channels",
+    "prune_batchnorm_out_channels",
+    "prune_conv_in_channels",
+    "prune_conv_out_channels",
+    "prune_depthwise_conv_in_channels",
+    "prune_depthwise_conv_out_channels",
+    "prune_embedding_in_channels",
+    "prune_embedding_out_channels",
+    "prune_groupnorm_in_channels",
+    "prune_groupnorm_out_channels",
+    "prune_instancenorm_in_channels",
+    "prune_instancenorm_out_channels",
+    "prune_layernorm_in_channels",
+    "prune_layernorm_out_channels",
+    "prune_linear_in_channels",
+    "prune_linear_out_channels",
+    "prune_multihead_attention_in_channels",
+    "prune_multihead_attention_out_channels",
+    "prune_parameter_in_channels",
+    "prune_parameter_out_channels",
+    "prune_prelu_in_channels",
+    "prune_prelu_out_channels",
+]
 
 __version__ = "1.6.0"
 __author__ = "Gongfan Fang"

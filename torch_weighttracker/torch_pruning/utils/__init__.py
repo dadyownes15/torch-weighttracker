@@ -1,3 +1,3 @@
-from .utils import *
-from .op_counter import count_ops_and_params
-from . import benchmark
+from .utils import flatten_as_list
+
+__all__ = ["flatten_as_list"]

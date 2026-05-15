@@ -1,22 +1,23 @@
 from collections.abc import Iterable
-import torch
+
 import torch.nn as nn
 
-from torch_weighttracker.calculations.base import Calculation
 import torch_weighttracker.calculations.calculations as calculation_impl
 from torch_weighttracker.calculations import (
-    CalcType,
     CachedCalculation,
+    CalcType,
     CalculationContext,
 )
-
+from torch_weighttracker.calculations.base import Calculation
 from torch_weighttracker.canonical_units import (
     CanonicalMember,
     CanonicalUnitGroup,
     canonicalize_groups,
 )
 from torch_weighttracker.consumer_ignore import IgnoreItem
-from torch_weighttracker.extractors.codeq_bitrate_extractor import ModuleBitrateExtractor
+from torch_weighttracker.extractors.codeq_bitrate_extractor import (
+    ModuleBitrateExtractor,
+)
 from torch_weighttracker.reductions.builder import IndexSelection, SegmentSelection
 from torch_weighttracker.regularizers import (
     RegularizerType,
@@ -312,16 +313,48 @@ class WeightTracker:
         ignore: Iterable[IgnoreItem] = (),
         **kwargs,
     ):
+        """
+        Create and register a metric tracker.
+
+        Tracker types:
+            TrackerType.STRUCTURED_BOPS / "structured_bops":
+                Tracks active structured bit operations from active runtime MACs
+                and per-module activation/weight bitrates.
+
+        Args:
+            tracker_type: The tracker type or string value to create.
+            ignore: Module instances or module types to remove from this
+                tracker's calculation context. StructuredBOPs removes matching
+                canonical members and weighted modules, so per-module metrics,
+                module names, and compression logs follow the filtered context.
+            **kwargs: Tracker-specific options. Unsupported kwargs raise
+                TypeError from the tracker constructor.
+
+        StructuredBOPs kwargs:
+            log_module_names (bool): Include "structured_bops_module_names",
+                aligned with "structured_bops_pr_module". Default: False.
+            log_compression_rate (bool): Include baseline structured BOPs and
+                "structured_bops_compression_rate", computed as
+                1 - structured_bops / structured_bops_baseline in this
+                tracker's calculation context. The baseline currently uses
+                hard-coded 32-bit activation and weight bitrates. Default:
+                False.
+        """
         tracker_type = TrackerType(tracker_type)
         tracker_cls = tracker_class_for_type(tracker_type)
         context = tracker_cls.calculation_context(self, ignore=ignore, **kwargs)
         if context is not None:
             self._validate_consumer_context(context)
+        tracker_kwargs = tracker_cls.constructor_kwargs(
+            self,
+            context=context,
+            **kwargs,
+        )
         calculations = self.ensure_calculations(
             tracker_cls.required_calculations,
             context=context,
         )
-        tracker = tracker_cls(calculations=calculations, **kwargs)
+        tracker = tracker_cls(calculations=calculations, **tracker_kwargs)
         self.trackers.append(tracker)
         return tracker
 
@@ -355,7 +388,7 @@ class WeightTracker:
         if len(self.canonical_groups) == 0:
             raise ValueError(
                 f"{calculation_type.value} requires dependency groups. Pass groups "
-                "when constructing StructTracker."
+                "when constructing WeightTracker."
             )
 
     def _calculation_context(
@@ -385,6 +418,7 @@ class WeightTracker:
                 module: index for index, module in enumerate(weighted_modules)
             },
             example_inputs=self.example_inputs,
+            weighted_module_names=self._module_names_for_modules(weighted_modules),
         )
 
     def _validate_consumer_context(self, context: CalculationContext) -> None:
@@ -425,7 +459,7 @@ class WeightTracker:
             context.dtype,
             None if context.example_inputs is None else id(context.example_inputs),
         )
-        
+
     def _get_weighted_module_entries(self):
         if self._weighted_module_entries is None:
             self._weighted_module_entries = tuple(
@@ -447,6 +481,19 @@ class WeightTracker:
                 for index, module in enumerate(self._get_weighted_modules())
             }
         return self._weighted_module_index
+
+    def _module_names_for_modules(
+        self,
+        modules: Iterable[nn.Module],
+    ) -> tuple[str, ...]:
+        names_by_module = _module_name_map(self.model)
+        return tuple(
+            names_by_module.get(
+                module,
+                f"<unnamed:{module.__class__.__name__}>",
+            )
+            for module in modules
+        )
 
 
 def _expanded_ignored_layers(ignored_layers):

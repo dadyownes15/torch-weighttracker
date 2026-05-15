@@ -98,7 +98,7 @@ def test_calculation_device_and_dtype_are_applied_to_pipeline_outputs() -> None:
     assert group_sizes().dtype == torch.long
 
 
-def test_cached_constant_calculations_keep_their_baseline_after_weight_changes() -> None:
+def test_cached_constant_calculations_keep_baseline_after_weight_changes() -> None:
     model, groups = _model_and_groups()
     tracker = WeightTracker(model, groups=groups)
 
@@ -203,6 +203,65 @@ def test_structured_bops_ignore_filters_weighted_modules() -> None:
 
     assert full.compute().numel() == len(tracker._get_weighted_modules())
     assert filtered.compute().numel() == 1
+
+
+def test_structured_bops_metric_module_names_follow_context() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    full_metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_module_names=True,
+    ).track()
+    filtered_metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        ignore=[model.fc2],
+        log_module_names=True,
+    ).track()
+
+    assert full_metrics["structured_bops_module_names"] == ("fc1", "fc2")
+    assert filtered_metrics["structured_bops_module_names"] == ("fc1",)
+    assert filtered_metrics["structured_bops_pr_module"].numel() == 1
+
+
+def test_structured_bops_compression_rate_follows_context() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    with torch.no_grad():
+        model.fc2.weight.zero_()
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    full_metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_compression_rate=True,
+    ).track()
+    filtered_metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        ignore=[model.fc2],
+        log_compression_rate=True,
+    ).track()
+
+    torch.testing.assert_close(
+        full_metrics["structured_bops_baseline"],
+        torch.tensor(9216.0),
+    )
+    torch.testing.assert_close(
+        full_metrics["structured_bops_compression_rate"],
+        torch.tensor(1.0 - 64.0 / 9216.0),
+    )
+    torch.testing.assert_close(
+        filtered_metrics["structured_bops_baseline"],
+        torch.tensor(6144.0),
+    )
+    torch.testing.assert_close(
+        filtered_metrics["structured_bops_compression_rate"],
+        torch.tensor(1.0 - 64.0 / 6144.0),
+    )
 
 
 def test_group_lasso_ignore_uses_context_key() -> None:

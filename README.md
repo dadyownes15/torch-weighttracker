@@ -1,9 +1,15 @@
 # torch-weighttracker
 
-Package for tracking structured weight sparsity, regularization signals,
-and bit-operation estimates in torch modules.
+Tools for tracking structured weight sparsity, regularization signals, and
+bit-operation estimates in PyTorch models.
 
-The API is centered on `WeightTracker`:
+`torch-weighttracker` is useful when the question is not "what is in this one
+tensor?" but "what is happening to the coupled channel, head, or feature unit
+that is shared across several tensors?"
+
+The package builds a structural view of a model, compiles tensorized reduction
+plans over that structure, and reuses those plans for training-time metrics and
+regularizers.
 
 ```python
 import torch
@@ -13,6 +19,7 @@ from torch_weighttracker import WeightTracker
 
 model = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 2))
 tracker = WeightTracker(model, example_inputs=torch.randn(1, 4))
+
 print(tracker.view_structures())
 ```
 
@@ -27,17 +34,38 @@ Structured BOPs MAC accounting uses `fvcore` for baseline per-module MACs:
 ```bash
 python -m pip install "torch-weighttracker[structured-bops]"
 ```
-## Tensorized cross weight operations
 
-Weighttracker builds an interface for doing cross weight tensor operations on models efficiently. Using the "Computation plans" and "Calculation" classes, we compile a set of torch modules which execute tensors and mapping operations on training device with the "minimal" set of repeated operations. 
+## Why Use It?
 
-## Use case
+PyTorch makes it easy to inspect one parameter tensor at a time. Structured
+compression often needs a different view:
 
-Weighttrackers primary use case for now is for calculating structural depedency based loss terms & metric evaluations, such as structured sparsity & structured compression rates, and group lasso. However, the code has been made such that it can be used for any weight traversering operations with some modifications.   
+- A channel can be coupled across convolutions, batch norms, linear layers, and
+  residual paths.
+- A transformer unit can mean an attention head, a head dimension, or a fused
+  QKV slice rather than a simple row or column.
+- A metric such as "active BOPs" depends on sparsity, module shape, MAC counts,
+  and bitrates at the same time.
+- A regularizer such as group lasso should penalize the coupled structural unit,
+  not each weight tensor independently.
+
+`WeightTracker` turns those coupled structures into canonical units, then lets
+calculations operate over the canonical units with reusable tensor programs.
+
+## Use Cases
+
+Current high-value use cases:
+
+- Add structured group lasso to a training loss.
+- Track active structured BOPs and compression rate during structured pruning,
+  sparsity-aware training, or quantization-aware training (QAT).
+- Inspect which modules participate in each channel, feature, head, or head-dim
+  group.
+- Build structural metrics that aggregate many weight tensors into one value per
+  pruning unit.
 
 
-
-## Group lasso
+## Group Lasso
 
 Structured group lasso regularizes coupled units together. Layers can be
 excluded per regularizer:
@@ -74,37 +102,69 @@ print(metrics["structured_bops_baseline"])
 print(metrics["structured_bops_compression_rate"])
 ```
 
+## Architecture
+
+The main API is `WeightTracker`. Internally it is split into a few layers:
+
+1. Dependency discovery: `WeightTracker` builds dependency groups from the model
+   and `example_inputs`, or accepts precomputed groups.
+2. Canonical units: `canonical_units.py` normalizes raw dependency groups into
+   `CanonicalUnitGroup` objects. These give channels, features, attention heads,
+   and head dimensions a shared unit index.
+3. Reduction plans: `reductions/` and `plans/` compile module and unit mappings
+   into segment and index operations that use PyTorch's efficient tensor
+   computations.
+4. Calculations: `calculations/` defines named calculation specs such as
+   per-unit L2 norm, active units, parameters per unit, active MACs, and bitrates.
+   Calculations can depend on each other and cache constant results.
+5. Consumers: `regularizers/` and `trackers/` request the calculations they need,
+   optionally with an `ignore` context for excluding modules from a specific
+   metric or regularizer.
+
+The result is a small public surface with a reusable internal graph:
+
+```text
+model + example inputs
+        |
+        v
+dependency groups -> canonical units -> reduction plans -> calculations
+                                                          |
+                                                          v
+                                               regularizers and trackers
+```
 
 ## Speed
-Comparing with a naive implementation we get the following speed ups: 
+
+Compared with a naive implementation, the current implementation gives the
+following speedups:
 
 - Group lasso: 15.503x
   - Naive: 4.6540s total, 232.698ms/step
-  - Weighttracker: 0.3002s total, 15.010ms/step
+  - WeightTracker: 0.3002s total, 15.010ms/step
 - Structured BOPs: 2.531x
   - Naive: 0.6757s total, 33.783ms/step
-  - Weighttracker: 0.2669s total, 13.346ms/step
+  - WeightTracker: 0.2669s total, 13.346ms/step
 
-| Comparison | Speedup | Naive extra alloc | Weighttracker extra alloc |
+| Comparison | Speedup | Naive extra allocation | WeightTracker extra allocation |
 |---|---:|---:|---:|
 | Group lasso | 15.421x | 197.0MiB | 197.0MiB |
 | Structured BOPs | 2.582x | 1.7GiB | 195.9MiB |
-
 
 ## Status
 
 This package is pre-1.0. Public APIs may still change while the tracker,
 calculation, and regularizer surfaces settle.
 
-## Future work:
+## Future Work
 
-1. Streamlining defintions and methods across the code for a unified and more compressed and perhabs more understandable API.
-2. Implement Calculation caching, such that computations are not computed twice
-3. Improve compilations of computation plans
-4. Improve memory management within calculations
-5. Write more comprehensive docstrings
+1. Streamline definitions and method names across the codebase.
+2. Improve calculation caching so repeated computations are not performed twice.
+3. Improve compilation of computation plans for bigger speedups.
+4. Improve memory management within calculations.
+5. Write more comprehensive docstrings.
 
-For future use cases, an update of the toplevel API `WeightTracker` is needed, including the ability to input custom operations, custom layers, generic group defintions etc.   
+Future custom use cases will need a broader top-level `WeightTracker` API for
+custom operations, custom layers, and generic group definitions.
 
 ## License
 

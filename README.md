@@ -1,9 +1,9 @@
 # torch-weighttracker
 
-PyTorch tools for tracking structured weight sparsity, regularization signals,
-and bit-operation estimates in neural network modules.
+Package for tracking structured weight sparsity, regularization signals,
+and bit-operation estimates in torch modules.
 
-The public API is centered on `WeightTracker`:
+The API is centered on `WeightTracker`:
 
 ```python
 import torch
@@ -27,13 +27,15 @@ Structured BOPs MAC accounting uses `fvcore` for baseline per-module MACs:
 ```bash
 python -m pip install "torch-weighttracker[structured-bops]"
 ```
-## Tensorized weight operations
+## Tensorized cross weight operations
 
-Weighttracker builds an abstraction interface for doing operations across weights, with the goal of builindg fast and efficient weight operations
+Weighttracker builds an interface for doing cross weight tensor operations on models efficiently. Using the "Computation plans" and "Calculation" classes, we compile a set of torch modules which execute tensors and mapping operations on training device with the "minimal" set of repeated operations. 
 
 ## Use case
 
-Primary use case for weighttracker is for calculating weight depedent loss terms and weight depedent metrics
+Weighttrackers primary use case for now is for calculating structural depedency based loss terms & metric evaluations, such as structured sparsity & structured compression rates, and group lasso. However, the code has been made such that it can be used for any weight traversering operations with some modifications.   
+
+
 
 ## Group lasso
 
@@ -77,13 +79,13 @@ print(metrics["structured_bops_compression_rate"])
 Comparing with a naive implementation we get the following speed ups: 
 
 - Group lasso: 15.503x
-  - Analyzer: 4.6540s total, 232.698ms/step
+  - Naive: 4.6540s total, 232.698ms/step
   - Weighttracker: 0.3002s total, 15.010ms/step
 - Structured BOPs: 2.531x
-  - Analyzer: 0.6757s total, 33.783ms/step
+  - Naive: 0.6757s total, 33.783ms/step
   - Weighttracker: 0.2669s total, 13.346ms/step
 
-| Comparison | Speedup | Analyzer extra alloc | Weighttracker extra alloc |
+| Comparison | Speedup | Naive extra alloc | Weighttracker extra alloc |
 |---|---:|---:|---:|
 | Group lasso | 15.421x | 197.0MiB | 197.0MiB |
 | Structured BOPs | 2.582x | 1.7GiB | 195.9MiB |
@@ -93,6 +95,16 @@ Comparing with a naive implementation we get the following speed ups:
 
 This package is pre-1.0. Public APIs may still change while the tracker,
 calculation, and regularizer surfaces settle.
+
+## Future work:
+
+1. Streamlining defintions and methods across the code for a unified and more compressed and perhabs more understandable API.
+2. Implement Calculation caching, such that computations are not computed twice
+3. Improve compilations of computation plans
+4. Improve memory management within calculations
+5. Write more comprehensive docstrings
+
+For future use cases, an update of the toplevel API `WeightTracker` is needed, including the ability to input custom operations, custom layers, generic group defintions etc.   
 
 ## License
 

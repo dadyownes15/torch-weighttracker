@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68", "wheel"]
+requires = ["setuptools>=68", "setuptools-scm>=8", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "torch-weighttracker"
-version = "0.1.1"
+dynamic = ["version"]
 description = "Tools for tracking structured weight sparsity in PyTorch models."
 readme = "README.md"
 requires-python = ">=3.10"
@@ -45,6 +45,8 @@ dev = [
 Homepage = "https://github.com/dadyownes15/torch-weighttracker"
 Issues = "https://github.com/dadyownes15/torch-weighttracker/issues"
 Repository = "https://github.com/dadyownes15/torch-weighttracker"
+
+[tool.setuptools_scm]
 
 [tool.setuptools.packages.find]
 where = ["."]

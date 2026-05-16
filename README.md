@@ -138,13 +138,6 @@ dependency groups -> canonical units -> reduction plans -> calculations
 Compared with a naive implementation, the current implementation gives the
 following speedups on ResNet 20 on a RTX 3060:
 
-- Group lasso: 15.503x
-  - Naive: 4.6540s total, 232.698ms/step
-  - WeightTracker: 0.3002s total, 15.010ms/step
-- Structured BOPs: 2.531x
-  - Naive: 0.6757s total, 33.783ms/step
-  - WeightTracker: 0.2669s total, 13.346ms/step
-
 | Comparison | Speedup | Naive extra allocation | WeightTracker extra allocation |
 |---|---:|---:|---:|
 | Group lasso | 15.421x | 197.0MiB | 197.0MiB |

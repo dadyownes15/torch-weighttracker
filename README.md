@@ -3,10 +3,6 @@
 Tools for tracking structured weight sparsity, regularization signals, and
 bit-operation estimates in PyTorch models.
 
-`torch-weighttracker` is useful when the question is not "what is in this one
-tensor?" but "what is happening to the coupled channel, head, or feature unit
-that is shared across several tensors?"
-
 The package builds a structural view of a model, compiles tensorized reduction
 plans over that structure, and reuses those plans for training-time metrics and
 regularizers.

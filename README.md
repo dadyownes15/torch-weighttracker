@@ -54,7 +54,7 @@ calculations operate over the canonical units with reusable tensor programs.
 
 ## Use Cases
 
-Current high-value use cases:
+Current use cases:
 
 - Add structured group lasso to a training loss.
 - Track active structured BOPs and compression rate during structured pruning,

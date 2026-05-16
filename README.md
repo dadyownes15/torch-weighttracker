@@ -136,7 +136,7 @@ dependency groups -> canonical units -> reduction plans -> calculations
 ## Speed
 
 Compared with a naive implementation, the current implementation gives the
-following speedups:
+following speedups on ResNet 20 on a RTX 3060:
 
 - Group lasso: 15.503x
   - Naive: 4.6540s total, 232.698ms/step

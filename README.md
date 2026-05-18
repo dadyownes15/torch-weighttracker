@@ -107,6 +107,30 @@ print(raw_metrics["structured_bops"])
 print(raw_metrics["structured_bops_pr_module"])
 ```
 
+## Unstructured Sparsity
+
+Unstructured sparsity reports exact zero-weight fractions. The total is weighted
+by each layer's number of weight elements, not averaged across layer fractions:
+
+```python
+import torch
+
+from torch_weighttracker.trackers import TrackerType
+
+metrics = tracker.create_tracker(
+    TrackerType.UNSTRUCTURED_SPARSITY,
+    include=[model.layer3, model.layer4],
+    ignore=[torch.nn.BatchNorm2d],
+).track()
+
+print(metrics["unstructured_sparsity"])
+print(metrics["layers"])
+```
+
+Values are fractions in `[0, 1]`. Parametrized fake quantization is measured
+through the effective `module.weight`, so quantized zeros count as sparse
+weights.
+
 ## Architecture
 
 The main API is `WeightTracker`. Internally it is split into a few layers:

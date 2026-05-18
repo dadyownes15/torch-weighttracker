@@ -16,6 +16,7 @@ from torch_weighttracker.calculations.calculations import (
     ParamPrUnit,
     UnitActiveMaskCalc,
     UnitPrGroup,
+    UnstructuredSparsityPrModuleCalc,
     create_active_macs_pr_module_calc,
     create_active_units_calc,
     create_baseline_group_sizes_calc,
@@ -24,8 +25,8 @@ from torch_weighttracker.calculations.calculations import (
     create_baseline_param_pr_unit_pr_group_calc,
     create_bitrate_pr_module_calc,
     create_group_change_effect_calc,
-    create_group_unit_param_change_calc,
     create_group_sizes_calc,
+    create_group_unit_param_change_calc,
     create_groups_to_units_calc,
     create_l2_norm_pr_unit_calc,
     create_param_pr_unit_calc,
@@ -34,6 +35,7 @@ from torch_weighttracker.calculations.calculations import (
     create_unit_delta_to_module_axis_calc,
     create_units_to_group_calc,
     create_units_to_module_axis_calc,
+    create_unstructured_sparsity_pr_module_calc,
 )
 from torch_weighttracker.calculations.pipeline_calc import PipelineCalc
 from torch_weighttracker.calculations.reduction_calc import ReductionCalc
@@ -56,6 +58,7 @@ __all__ = [
     "ReductionCalc",
     "UnitActiveMaskCalc",
     "UnitPrGroup",
+    "UnstructuredSparsityPrModuleCalc",
     "create_active_macs_pr_module_calc",
     "create_active_units_calc",
     "create_baseline_group_sizes_calc",
@@ -72,6 +75,7 @@ __all__ = [
     "create_structured_unit_sum_calc",
     "create_unit_active_mask_calc",
     "create_unit_delta_to_module_axis_calc",
+    "create_unstructured_sparsity_pr_module_calc",
     "create_units_to_group_calc",
     "create_units_to_module_axis_calc",
 ]

@@ -1,6 +1,7 @@
 import pytest
 import torch
 import torch.nn as nn
+import torch.nn.utils.parametrize as parametrize
 
 from tests.test_calculation_specs import TinyLinearChain, _model_and_groups
 from torch_weighttracker import WeightTracker
@@ -11,6 +12,21 @@ from torch_weighttracker.consumer_ignore import (
 )
 from torch_weighttracker.regularizers import RegularizerType
 from torch_weighttracker.trackers import TrackerType
+
+
+class FakeQuantZeroSmall(nn.Module):
+    def forward(self, weight: torch.Tensor) -> torch.Tensor:
+        return torch.where(weight.abs() < 0.5, torch.zeros_like(weight), weight)
+
+
+class TinyAttentionSparsityModel(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.attn = nn.MultiheadAttention(embed_dim=4, num_heads=2, batch_first=True)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        y, _ = self.attn(x, x, x, need_weights=False)
+        return y
 
 
 def _assert_tensor_dict_close(actual, expected: dict[str, torch.Tensor]) -> None:
@@ -56,14 +72,8 @@ def test_view_structures_returns_canonical_group_printout() -> None:
     assert "CanonicalGroups" in text
     assert "groups=2 total_units=4" in text
     assert "- group 0: units=[0:3) length=3 kind=channel members=2" in text
-    assert (
-        "    - fc1 Linear axis=out_channel layout=plain dest=(0, 1, 2)"
-        in text
-    )
-    assert (
-        "    - fc2 Linear axis=in_channel layout=plain dest=(0, 1, 2)"
-        in text
-    )
+    assert "    - fc1 Linear axis=out_channel layout=plain dest=(0, 1, 2)" in text
+    assert "    - fc2 Linear axis=in_channel layout=plain dest=(0, 1, 2)" in text
     assert "- group 1: units=[3:4) length=1 kind=channel members=1" in text
     assert "    - fc2 Linear axis=out_channel layout=plain dest=(3)" in text
 
@@ -78,9 +88,7 @@ def test_weight_tracker_removes_ignored_layer_members_from_groups() -> None:
     )
 
     modules = {
-        member.module
-        for group in tracker.canonical_groups
-        for member in group.members
+        member.module for group in tracker.canonical_groups for member in group.members
     }
     assert model.fc1 in modules
     assert model.fc2 not in modules
@@ -268,9 +276,10 @@ def test_structured_bops_include_parent_matches_default_values() -> None:
         log_compression_rate=True,
     ).track()
 
-    assert included_metrics["structured_bops_module_names"] == full_metrics[
-        "structured_bops_module_names"
-    ]
+    assert (
+        included_metrics["structured_bops_module_names"]
+        == full_metrics["structured_bops_module_names"]
+    )
     torch.testing.assert_close(
         included_metrics["structured_bops"],
         full_metrics["structured_bops"],
@@ -336,6 +345,116 @@ def test_structured_bops_include_parent_ignore_child_keeps_fc1() -> None:
         metrics["structured_bops_pr_module"],
         {"fc1": torch.tensor(64.0)},
     )
+
+
+def test_unstructured_sparsity_reports_weighted_total_and_layers() -> None:
+    model, _ = _model_and_groups()
+    tracker = WeightTracker(model)
+
+    metrics = tracker.create_tracker(TrackerType.UNSTRUCTURED_SPARSITY).track()
+
+    torch.testing.assert_close(
+        metrics["unstructured_sparsity"],
+        torch.tensor(4.0 / 9.0),
+    )
+    _assert_tensor_dict_close(
+        metrics["layers"],
+        {
+            "fc1": torch.tensor(3.0 / 6.0),
+            "fc2": torch.tensor(1.0 / 3.0),
+        },
+    )
+
+
+def test_unstructured_sparsity_reflects_weight_changes_after_creation() -> None:
+    model, _ = _model_and_groups()
+    tracker = WeightTracker(model)
+    sparsity = tracker.create_tracker(TrackerType.UNSTRUCTURED_SPARSITY)
+
+    before = sparsity.track()
+
+    with torch.no_grad():
+        model.fc2.weight.zero_()
+
+    after = sparsity.track()
+
+    torch.testing.assert_close(before["unstructured_sparsity"], torch.tensor(4.0 / 9.0))
+    torch.testing.assert_close(after["unstructured_sparsity"], torch.tensor(6.0 / 9.0))
+    _assert_tensor_dict_close(
+        after["layers"],
+        {
+            "fc1": torch.tensor(3.0 / 6.0),
+            "fc2": torch.tensor(1.0),
+        },
+    )
+
+
+def test_unstructured_sparsity_include_and_ignore_filter_layers() -> None:
+    model, _ = _model_and_groups()
+    tracker = WeightTracker(model)
+
+    included = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_SPARSITY,
+        include=[model.fc1],
+    ).track()
+    ignored = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_SPARSITY,
+        ignore=[model.fc2],
+    ).track()
+    parent_minus_child = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_SPARSITY,
+        include=[model],
+        ignore=[model.fc2],
+    ).track()
+
+    for metrics in (included, ignored, parent_minus_child):
+        torch.testing.assert_close(metrics["unstructured_sparsity"], torch.tensor(0.5))
+        _assert_tensor_dict_close(metrics["layers"], {"fc1": torch.tensor(0.5)})
+
+
+def test_unstructured_sparsity_filtering_all_weighted_modules_raises() -> None:
+    model, _ = _model_and_groups()
+    tracker = WeightTracker(model)
+
+    with pytest.raises(ValueError, match="weighted modules"):
+        tracker.create_tracker(
+            TrackerType.UNSTRUCTURED_SPARSITY,
+            ignore=[model],
+        )
+
+
+def test_unstructured_sparsity_reads_effective_parametrized_weight() -> None:
+    model = nn.Sequential(nn.Linear(4, 1, bias=False))
+    with torch.no_grad():
+        model[0].weight.copy_(torch.tensor([[0.1, -0.2, 1.0, -1.0]]))
+    parametrize.register_parametrization(model[0], "weight", FakeQuantZeroSmall())
+
+    metrics = (
+        WeightTracker(model)
+        .create_tracker(
+            TrackerType.UNSTRUCTURED_SPARSITY,
+        )
+        .track()
+    )
+
+    torch.testing.assert_close(metrics["unstructured_sparsity"], torch.tensor(0.5))
+    _assert_tensor_dict_close(metrics["layers"], {"0": torch.tensor(0.5)})
+
+
+def test_unstructured_sparsity_counts_multihead_attention_projection_weights() -> None:
+    model = TinyAttentionSparsityModel()
+    with torch.no_grad():
+        model.attn.in_proj_weight[:6].zero_()
+    tracker = WeightTracker(model)
+
+    metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_SPARSITY,
+        include=[model.attn],
+        ignore=[model.attn.out_proj],
+    ).track()
+
+    torch.testing.assert_close(metrics["unstructured_sparsity"], torch.tensor(0.5))
+    _assert_tensor_dict_close(metrics["layers"], {"attn": torch.tensor(0.5)})
 
 
 def test_structured_bops_metric_module_names_follow_context() -> None:
@@ -462,8 +581,7 @@ def test_filtering_keeps_group_index_space_stable() -> None:
     )
 
     assert [
-        (group.group_id, group.offset, group.length)
-        for group in filtered_groups
+        (group.group_id, group.offset, group.length) for group in filtered_groups
     ] == [
         (group.group_id, group.offset, group.length)
         for group in tracker.canonical_groups

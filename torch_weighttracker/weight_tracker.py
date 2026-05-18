@@ -82,7 +82,7 @@ class WeightTracker:
                 )
         else:
             self.groups = list(groups)
-            
+
         if all(isinstance(group, CanonicalUnitGroup) for group in self.groups):
             self.canonical_groups = tuple(self.groups)
         else:
@@ -114,9 +114,7 @@ class WeightTracker:
             example_inputs=example_inputs,
             forward_fn=forward_fn,
             output_transform=output_transform,
-            unwrapped_parameters=_normalize_unwrapped_parameters(
-                unwrapped_parameters
-            ),
+            unwrapped_parameters=_normalize_unwrapped_parameters(unwrapped_parameters),
             customized_pruners=customized_pruners,
             ignored_params=self.ignored_params,
         )
@@ -168,7 +166,7 @@ class WeightTracker:
         filtered_group._group = list(filtered_items)
         filtered_group._DG = getattr(group, "_DG", None)
         return filtered_group
-        
+
     def _get_calculation(
         self,
         calculation_type: CalcType,
@@ -324,6 +322,9 @@ class WeightTracker:
             TrackerType.L2_NORM_DISTRIBUTION / "l2_norm_distribution":
                 Tracks each canonical group's per-prune-unit L2 norm
                 distribution.
+            TrackerType.UNSTRUCTURED_SPARSITY / "unstructured_sparsity":
+                Tracks exact zero-weight sparsity as a global weighted fraction
+                plus per-layer fractions.
 
         Args:
             tracker_type: The tracker type or string value to create.
@@ -332,9 +333,9 @@ class WeightTracker:
                 descendants.
             ignore: Optional module instances or module types to remove from
                 this tracker's calculation context. Ignore wins when a module
-                matches both include and ignore. StructuredBOPs filters both
-                canonical members and weighted modules, so per-module metrics,
-                module names, and compression logs follow the filtered context.
+                matches both include and ignore. Trackers apply these filters
+                to the modules they measure, so per-module metrics and names
+                follow the filtered context.
             **kwargs: Tracker-specific options. Unsupported kwargs raise
                 TypeError from the tracker constructor.
 
@@ -349,6 +350,12 @@ class WeightTracker:
                 tracker's calculation context. The baseline currently uses
                 hard-coded 32-bit activation and weight bitrates. Default:
                 False.
+
+        UnstructuredSparsity output:
+            "unstructured_sparsity": Global zero-weight fraction, computed as
+                total zero weight elements divided by total weight elements.
+            "layers": A dict mapping module names to per-module zero-weight
+                fractions.
         """
         tracker_type = TrackerType(tracker_type)
         tracker_cls = tracker_class_for_type(tracker_type)
@@ -465,10 +472,7 @@ class WeightTracker:
                 "context."
             )
 
-        if (
-            len(self._get_weighted_modules()) > 0
-            and len(context.weighted_modules) == 0
-        ):
+        if len(self._get_weighted_modules()) > 0 and len(context.weighted_modules) == 0:
             raise ValueError(
                 "Consumer filters removed all weighted modules from the calculation "
                 "context."

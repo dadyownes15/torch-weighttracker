@@ -25,11 +25,11 @@ from torch_weighttracker.calculations.calcs.bitrate_pr_module import (
 from torch_weighttracker.calculations.calcs.group_change_effect import (
     CALCULATION_SPEC as GROUP_CHANGE_EFFECT_CALCULATION_SPEC,
 )
-from torch_weighttracker.calculations.calcs.group_unit_param_change import (
-    CALCULATION_SPEC as GROUP_UNIT_PARAM_CHANGE_CALCULATION_SPEC,
-)
 from torch_weighttracker.calculations.calcs.group_sizes import (
     CALCULATION_SPEC as GROUP_SIZES_CALCULATION_SPEC,
+)
+from torch_weighttracker.calculations.calcs.group_unit_param_change import (
+    CALCULATION_SPEC as GROUP_UNIT_PARAM_CHANGE_CALCULATION_SPEC,
 )
 from torch_weighttracker.calculations.calcs.groups_to_units import (
     CALCULATION_SPEC as GROUPS_TO_UNITS_CALCULATION_SPEC,
@@ -55,8 +55,10 @@ from torch_weighttracker.calculations.calcs.units_to_group import (
 from torch_weighttracker.calculations.calcs.units_to_module_axis import (
     CALCULATION_SPEC as UNITS_TO_MODULE_AXIS_CALCULATION_SPEC,
 )
+from torch_weighttracker.calculations.calcs.unstructured_sparsity_pr_module import (
+    CALCULATION_SPEC as UNSTRUCTURED_SPARSITY_PR_MODULE_CALCULATION_SPEC,
+)
 from torch_weighttracker.calculations.spec import CalculationSpec
-
 
 _CALCULATION_SPEC_LIST = (
     ACTIVE_UNITS_CALCULATION_SPEC,
@@ -75,6 +77,7 @@ _CALCULATION_SPEC_LIST = (
     BASELINE_MACS_PR_MODULE_CALCULATION_SPEC,
     ACTIVE_MACS_PR_MODULE_CALCULATION_SPEC,
     BITRATE_PR_MODULE_CALCULATION_SPEC,
+    UNSTRUCTURED_SPARSITY_PR_MODULE_CALCULATION_SPEC,
     L2_NORM_PR_UNIT_CALCULATION_SPEC,
     STRUCTURED_UNIT_SUM_CALCULATION_SPEC,
 )

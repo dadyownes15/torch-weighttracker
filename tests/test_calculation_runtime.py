@@ -24,6 +24,7 @@ from torch_weighttracker.regularizers.group_lasso import GroupLasso
 from torch_weighttracker.trackers.base import BaseTracker
 from torch_weighttracker.trackers.l2_norm_distribution import L2NormDistribution
 from torch_weighttracker.trackers.structured_bops import StructuredBOPs
+from torch_weighttracker.trackers.unstructured_sparsity import UnstructuredSparsity
 
 
 class TensorOp(nn.Module):
@@ -275,3 +276,8 @@ def test_structured_bops_requires_explicit_calculations() -> None:
 def test_l2_norm_distribution_requires_explicit_calculations() -> None:
     with pytest.raises(ValueError, match="missing required calculations"):
         L2NormDistribution({})
+
+
+def test_unstructured_sparsity_requires_explicit_calculations() -> None:
+    with pytest.raises(ValueError, match="missing required calculations"):
+        UnstructuredSparsity({})

@@ -15,6 +15,40 @@ class TrackerType(str, Enum):
     UNSTRUCTURED_SPARSITY = "unstructured_sparsity"
 
 
+TrackerTypeInput = TrackerType | str
+TrackerTypeSpec = TrackerTypeInput | Iterable[TrackerTypeInput]
+
+
+def valid_tracker_type_values() -> tuple[str, ...]:
+    return tuple(tracker_type.value for tracker_type in TrackerType)
+
+
+def _valid_tracker_type_message() -> str:
+    return ", ".join(valid_tracker_type_values())
+
+
+def normalize_tracker_type(tracker_type: TrackerTypeInput) -> TrackerType:
+    try:
+        return TrackerType(tracker_type)
+    except ValueError as exc:
+        raise ValueError(
+            f"{tracker_type!r} is not a valid TrackerType. "
+            f"Available trackers: {_valid_tracker_type_message()}."
+        ) from exc
+
+
+def is_tracker_type_collection(tracker_type: TrackerTypeSpec) -> bool:
+    return not isinstance(tracker_type, (str, TrackerType)) and isinstance(
+        tracker_type, Iterable
+    )
+
+
+def normalize_tracker_types(tracker_type: TrackerTypeSpec) -> tuple[TrackerType, ...]:
+    if is_tracker_type_collection(tracker_type):
+        return tuple(normalize_tracker_type(item) for item in tracker_type)
+    return (normalize_tracker_type(tracker_type),)
+
+
 class BaseTracker(nn.Module, ABC):
     required_calculations: tuple[CalcType, ...] = ()
 
@@ -88,8 +122,8 @@ class BaseTracker(nn.Module, ABC):
         return self.calc(calc_type)(*args, **kwargs)
 
 
-def tracker_class_for_type(tracker_type: TrackerType | str):
-    tracker_type = TrackerType(tracker_type)
+def tracker_class_for_type(tracker_type: TrackerTypeInput):
+    tracker_type = normalize_tracker_type(tracker_type)
 
     if tracker_type == TrackerType.STRUCTURED_BOPS:
         from torch_weighttracker.trackers.structured_bops import StructuredBOPs

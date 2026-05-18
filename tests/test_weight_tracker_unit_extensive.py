@@ -11,7 +11,7 @@ from torch_weighttracker.consumer_ignore import (
     filter_canonical_members,
 )
 from torch_weighttracker.regularizers import RegularizerType
-from torch_weighttracker.trackers import TrackerType
+from torch_weighttracker.trackers import TrackerType, tracker_class_for_type
 
 
 class FakeQuantZeroSmall(nn.Module):
@@ -153,6 +153,51 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
         },
     )
     assert tracker.trackers == [structured_bops]
+
+
+@pytest.mark.parametrize(
+    "tracker_types",
+    (
+        ["l2_norm_distribution", "unstructured_sparsity"],
+        [TrackerType.L2_NORM_DISTRIBUTION, TrackerType.UNSTRUCTURED_SPARSITY],
+    ),
+)
+def test_create_tracker_accepts_tracker_type_lists(tracker_types) -> None:
+    model, groups = _model_and_groups()
+    tracker = WeightTracker(model, groups=groups)
+
+    created_trackers = tracker.create_tracker(tracker_types)
+    metrics = tracker.track()
+
+    assert tracker.trackers == created_trackers
+    assert len(created_trackers) == 2
+    assert "l2_norm_distribution/fc1:prune_out_channels" in metrics
+    assert "unstructured_sparsity" in metrics
+
+
+def test_invalid_tracker_type_lists_available_tracker_values() -> None:
+    model, groups = _model_and_groups()
+    tracker = WeightTracker(model, groups=groups)
+
+    with pytest.raises(ValueError) as exc_info:
+        tracker.create_tracker("l2_norm")
+
+    message = str(exc_info.value)
+    assert "'l2_norm' is not a valid TrackerType" in message
+    assert "Available trackers:" in message
+    for tracker_type in TrackerType:
+        assert tracker_type.value in message
+
+
+def test_tracker_class_for_type_lists_available_tracker_values() -> None:
+    with pytest.raises(ValueError) as exc_info:
+        tracker_class_for_type("l2_norm")
+
+    message = str(exc_info.value)
+    assert "'l2_norm' is not a valid TrackerType" in message
+    assert "Available trackers:" in message
+    for tracker_type in TrackerType:
+        assert tracker_type.value in message
 
 
 def test_create_regularizer_wires_group_lasso_and_keeps_gradients() -> None:

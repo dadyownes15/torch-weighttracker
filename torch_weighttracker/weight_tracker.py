@@ -29,6 +29,10 @@ from torch_weighttracker.trackers import (
     TrackerType,
     tracker_class_for_type,
 )
+from torch_weighttracker.trackers.base import (
+    is_tracker_type_collection,
+    normalize_tracker_types,
+)
 
 
 class WeightTracker:
@@ -306,7 +310,7 @@ class WeightTracker:
 
     def create_tracker(
         self,
-        tracker_type: TrackerType | str,
+        tracker_type: TrackerType | str | Iterable[TrackerType | str],
         *,
         include: Iterable[FilterItem] = (),
         ignore: Iterable[FilterItem] = (),
@@ -331,7 +335,10 @@ class WeightTracker:
                 "unstructured_sparsity" and "layers".
 
         Args:
-            tracker_type: The tracker type enum or string value to create.
+            tracker_type: The tracker type enum or string value to create, or
+                a list/iterable of tracker type enums or string values to
+                create together. Single values return one tracker. Iterable
+                values return a list of trackers in the requested order.
                 Valid strings are "structured_bops", "l2_norm_distribution",
                 and "unstructured_sparsity".
             include: Optional module instances or module types to keep in this
@@ -342,8 +349,9 @@ class WeightTracker:
                 matches both include and ignore. Trackers apply these filters
                 to the modules they measure, so per-module metrics and names
                 follow the filtered context.
-            **kwargs: Tracker-specific options. Unsupported kwargs raise
-                TypeError from the tracker constructor.
+            **kwargs: Tracker-specific options. When creating multiple
+                trackers, kwargs are passed to each tracker. Unsupported kwargs
+                raise TypeError from the tracker constructor.
 
         StructuredBOPs kwargs:
             log_total_bops (bool): Include active and baseline structured BOP
@@ -366,7 +374,35 @@ class WeightTracker:
         L2NormDistribution and UnstructuredSparsity have no public
         tracker-specific kwargs.
         """
-        tracker_type = TrackerType(tracker_type)
+        is_collection = is_tracker_type_collection(tracker_type)
+        tracker_types = normalize_tracker_types(tracker_type)
+
+        if is_collection:
+            return [
+                self._create_single_tracker(
+                    tracker_type_item,
+                    include=include,
+                    ignore=ignore,
+                    **kwargs,
+                )
+                for tracker_type_item in tracker_types
+            ]
+
+        return self._create_single_tracker(
+            tracker_types[0],
+            include=include,
+            ignore=ignore,
+            **kwargs,
+        )
+
+    def _create_single_tracker(
+        self,
+        tracker_type: TrackerType,
+        *,
+        include: Iterable[FilterItem] = (),
+        ignore: Iterable[FilterItem] = (),
+        **kwargs,
+    ):
         tracker_cls = tracker_class_for_type(tracker_type)
         context = tracker_cls.calculation_context(
             self,

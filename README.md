@@ -107,6 +107,14 @@ print(raw_metrics["structured_bops"])
 print(raw_metrics["structured_bops_pr_module"])
 ```
 
+`create_tracker` accepts a single `TrackerType`/string or a list of tracker
+types/strings:
+
+```python
+tracker.create_tracker([TrackerType.STRUCTURED_BOPS, "unstructured_sparsity"])
+metrics = tracker.track()
+```
+
 ## Unstructured Sparsity
 
 Unstructured sparsity reports exact zero-weight fractions. The total is weighted

@@ -115,6 +115,7 @@ tracker.create_tracker([TrackerType.STRUCTURED_BOPS, "unstructured_sparsity"])
 metrics = tracker.track()
 ```
 
+
 ## Unstructured Sparsity
 
 Unstructured sparsity reports exact zero-weight fractions. The total is weighted
@@ -138,6 +139,62 @@ print(metrics["layers"])
 Values are fractions in `[0, 1]`. Parametrized fake quantization is measured
 through the effective `module.weight`, so quantized zeros count as sparse
 weights.
+
+### Formal defintion
+
+Structured BOPs are calculated from the pruned layerwise MACs and the bitwidths of the weights and activations  [1]:
+
+\[
+\text{BOPs}_l =
+\text{MACs}_l
+\cdot
+b_{w,l}
+\cdot
+b_{a,l-1}
+\]
+
+The pruned layerwise MACs are:
+
+\[
+\text{MACs}_l =
+(1 - p_{l-1})c_{l-1}
+\cdot
+(1 - p_l)c_l
+\cdot
+m_{w,l}
+\cdot
+m_{h,l}
+\cdot
+k_w
+\cdot
+k_h
+\]
+
+The effective layerwise pruning ratio is:
+
+\[
+P_l = 1 - (1 - p_{l-1})(1 - p_l)
+\]
+
+Where:
+
+- \(\text{BOPs}_l\): bit operations for layer \(l\)
+- \(\text{MACs}_l\): multiply-accumulate operations for layer \(l\)
+- \(b_{w,l}\): weight bitwidth for layer \(l\)
+- \(b_{a,l-1}\): activation bitwidth from the previous layer
+- \(p_{l-1}\): pruning ratio of the input structures
+- \(p_l\): pruning ratio of the output structures
+- \(P_l\): effective pruning ratio for layer \(l\)
+- \(c_{l-1}\): number of input channels
+- \(c_l\): number of output channels
+- \(m_{w,l}, m_{h,l}\): output feature map width and height
+- \(k_w, k_h\): kernel width and height
+
+### Comparison with Direct Removal and FLOP Count
+
+For some model architectures, the BOPs calculation may differ from the values reported by other libraries. These differences are mainly due to variations in which layers and operations are included in the calculation. WeightTracker does not account for elementwise operations such as ReLU activations or bias terms.
+
+As a sanity check, I have included notebooks that illustrate these differences by comparing `fvcore.FlopCountAnalysis` on hard-pruned models with WeightTracker on fake-pruned models, where weights are zeroed such that it is equivalent to the hard-pruned. 
 
 ## Architecture
 
@@ -184,7 +241,7 @@ following speedups on ResNet 20 on a RTX 3060:
 
 This package is pre-1.0. Public APIs may still change while the tracker,
 calculation, and regularizer surfaces settle.
-
+ 
 ## Future Work
 
 1. Streamline definitions and method names across the codebase.
@@ -199,3 +256,7 @@ custom operations, custom layers, and generic group definitions.
 ## License
 
 MIT
+
+## References
+
+[1] Wang et al., *Differentiable Joint Pruning and Quantization for Hardware Efficiency*, 2020.

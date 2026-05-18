@@ -40,6 +40,9 @@ dev = [
     "torchvision>=0.15",
     "twine>=5.0",
 ]
+dev-local = [
+    "torch-pruning>=1.6",
+]
 
 [project.urls]
 Homepage = "https://github.com/dadyownes15/torch-weighttracker"
@@ -62,6 +65,7 @@ addopts = [
     "--ignore=tests/test_attention_axes_unit.py",
     "--ignore=tests/test_model_structured_sparsity.py",
     "--ignore=tests/test_sparsity_controller.py",
+    "--ignore=tests/dev_local",
     "--ignore=tests/ignored",
 ]
 pythonpath = ["."]

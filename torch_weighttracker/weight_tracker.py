@@ -306,7 +306,7 @@ class WeightTracker:
 
     def create_tracker(
         self,
-        tracker_type: TrackerType,
+        tracker_type: TrackerType | str,
         *,
         include: Iterable[FilterItem] = (),
         ignore: Iterable[FilterItem] = (),
@@ -318,16 +318,22 @@ class WeightTracker:
         Tracker types:
             TrackerType.STRUCTURED_BOPS / "structured_bops":
                 Tracks active structured bit operations from active runtime MACs
-                and per-module activation/weight bitrates.
+                and per-module activation/weight bitrates. Default output
+                includes "structured_bops_compression" and
+                "structured_bops_compression_rate_pr_module".
             TrackerType.L2_NORM_DISTRIBUTION / "l2_norm_distribution":
                 Tracks each canonical group's per-prune-unit L2 norm
-                distribution.
+                distribution. Output keys use
+                "l2_norm_distribution/<group_name>".
             TrackerType.UNSTRUCTURED_SPARSITY / "unstructured_sparsity":
                 Tracks exact zero-weight sparsity as a global weighted fraction
-                plus per-layer fractions.
+                plus per-layer fractions. Output includes
+                "unstructured_sparsity" and "layers".
 
         Args:
-            tracker_type: The tracker type or string value to create.
+            tracker_type: The tracker type enum or string value to create.
+                Valid strings are "structured_bops", "l2_norm_distribution",
+                and "unstructured_sparsity".
             include: Optional module instances or module types to keep in this
                 tracker's calculation context. Module instances include their
                 descendants.
@@ -356,6 +362,9 @@ class WeightTracker:
                 total zero weight elements divided by total weight elements.
             "layers": A dict mapping module names to per-module zero-weight
                 fractions.
+
+        L2NormDistribution and UnstructuredSparsity have no public
+        tracker-specific kwargs.
         """
         tracker_type = TrackerType(tracker_type)
         tracker_cls = tracker_class_for_type(tracker_type)

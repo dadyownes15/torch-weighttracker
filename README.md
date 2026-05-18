@@ -117,6 +117,87 @@ tracker.create_tracker([TrackerType.STRUCTURED_BOPS, "unstructured_sparsity"])
 metrics = tracker.track()
 ```
 
+#### Formulation of the Structured BOPs Metric
+
+For each weighted module $m$, WeightTracker multiplies the active structured MAC
+count by that module's activation and weight bit widths [1]:
+
+$$
+\operatorname{StructuredBOPs}_m =
+\operatorname{ActiveMACs}_m
+\cdot
+b^{\mathrm{act}}_m
+\cdot
+b^{\mathrm{weight}}_m
+$$
+
+The active MAC count scales the dense module MAC count by the active fraction of
+each structural cost axis:
+
+$$
+\operatorname{ActiveMACs}_m =
+\operatorname{BaselineMACs}_m
+\cdot
+\prod_{a \in A_m}
+\frac{n^{\mathrm{active}}_{m,a}}{n^{\mathrm{baseline}}_{m,a}}
+$$
+
+Compression is reported against a dense 32-bit activation and 32-bit weight
+baseline:
+
+$$
+\operatorname{BaselineBOPs}_m =
+\operatorname{BaselineMACs}_m
+\cdot
+32
+\cdot
+32
+$$
+
+$$
+\operatorname{CompressionRate} =
+1 -
+\frac{\sum_m \operatorname{StructuredBOPs}_m}
+{\sum_m \operatorname{BaselineBOPs}_m}
+$$
+
+Where:
+
+- $\operatorname{StructuredBOPs}_m$: active bit operations for weighted module
+  $m$.
+- $\operatorname{ActiveMACs}_m$: active MAC count after structured units are
+  masked or pruned.
+- $\operatorname{BaselineMACs}_m$: dense MAC count for module $m$ before
+  structured pruning.
+- $A_m$: structural cost axes for module $m$, such as input and output channel
+  axes.
+- $n^{\mathrm{active}}_{m,a}$: active size of cost axis $a$ for module $m$.
+- $n^{\mathrm{baseline}}_{m,a}$: dense baseline size of cost axis $a$ for
+  module $m$.
+- $b^{\mathrm{act}}_m$: activation bit width for module $m$.
+- $b^{\mathrm{weight}}_m$: weight bit width for module $m$.
+
+### Comparison with Direct Removal and FLOP Count
+
+For some model architectures, the BOPs calculation may differ from values
+reported by other libraries. These differences mainly come from which layers and
+operations are included. WeightTracker does not count elementwise operations
+such as ReLU activations or bias terms.
+
+The repository includes sanity notebooks comparing `fvcore.FlopCountAnalysis`
+on physically pruned models with WeightTracker on fake-pruned models, where
+weights are zeroed to match the equivalent hard-pruned structure.
+
+Local sanity notebooks compare WeightTracker MAC accounting with physically
+pruned models from Torch-Pruning. These dependencies are optional and are not
+installed with the base package:
+
+```bash
+python -m pip install -e ".[dev-local]"
+```
+
+Then start Jupyter from the repository root and open the notebooks in
+`sanity_checks/`.
 
 ## Unstructured Sparsity
 
@@ -141,73 +222,6 @@ print(metrics["layers"])
 Values are fractions in `[0, 1]`. Parametrized fake quantization is measured
 through the effective `module.weight`, so quantized zeros count as sparse
 weights.
-
-### Formal defintion
-
-Structured BOPs are calculated from the pruned layerwise MACs and the bitwidths of the weights and activations  [1]:
-
-\[
-\text{BOPs}_l =
-\text{MACs}_l
-\cdot
-b_{w,l}
-\cdot
-b_{a,l-1}
-\]
-
-The pruned layerwise MACs are:
-
-\[
-\text{MACs}_l =
-(1 - p_{l-1})c_{l-1}
-\cdot
-(1 - p_l)c_l
-\cdot
-m_{w,l}
-\cdot
-m_{h,l}
-\cdot
-k_w
-\cdot
-k_h
-\]
-
-The effective layerwise pruning ratio is:
-
-\[
-P_l = 1 - (1 - p_{l-1})(1 - p_l)
-\]
-
-Where:
-
-- \(\text{BOPs}_l\): bit operations for layer \(l\)
-- \(\text{MACs}_l\): multiply-accumulate operations for layer \(l\)
-- \(b_{w,l}\): weight bitwidth for layer \(l\)
-- \(b_{a,l-1}\): activation bitwidth from the previous layer
-- \(p_{l-1}\): pruning ratio of the input structures
-- \(p_l\): pruning ratio of the output structures
-- \(P_l\): effective pruning ratio for layer \(l\)
-- \(c_{l-1}\): number of input channels
-- \(c_l\): number of output channels
-- \(m_{w,l}, m_{h,l}\): output feature map width and height
-- \(k_w, k_h\): kernel width and height
-
-### Comparison with Direct Removal and FLOP Count
-
-For some model architectures, the BOPs calculation may differ from the values reported by other libraries. These differences are mainly due to variations in which layers and operations are included in the calculation. WeightTracker does not account for elementwise operations such as ReLU activations or bias terms.
-
-As a sanity check, I have included notebooks that illustrate these differences by comparing `fvcore.FlopCountAnalysis` on hard-pruned models with WeightTracker on fake-pruned models, where weights are zeroed such that it is equivalent to the hard-pruned. 
-
-Local sanity notebooks compare WeightTracker MAC accounting with physically
-pruned models from Torch-Pruning. These dependencies are optional and are not
-installed with the base package:
-
-```bash
-python -m pip install -e ".[dev-local]"
-```
-
-Then start Jupyter from the repository root and open the notebooks in
-`sanity_checks/`.
 
 ## Architecture
 

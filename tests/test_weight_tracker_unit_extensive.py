@@ -6,8 +6,8 @@ from tests.test_calculation_specs import TinyLinearChain, _model_and_groups
 from torch_weighttracker import WeightTracker
 from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.consumer_ignore import (
-    ModuleIgnore,
-    without_ignored_canonical_members,
+    ConsumerFilter,
+    filter_canonical_members,
 )
 from torch_weighttracker.regularizers import RegularizerType
 from torch_weighttracker.trackers import TrackerType
@@ -221,6 +221,123 @@ def test_structured_bops_ignore_filters_weighted_modules() -> None:
     assert filtered.compute().numel() == 1
 
 
+def test_structured_bops_include_filters_weighted_modules_and_names() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        include=[model.fc1],
+        log_module_names=True,
+        log_total_bops=True,
+    ).track()
+
+    assert metrics["structured_bops_module_names"] == ("fc1",)
+    _assert_tensor_dict_close(
+        metrics["structured_bops_pr_module"],
+        {"fc1": torch.tensor(64.0)},
+    )
+    _assert_tensor_dict_close(
+        metrics["structured_bops_baseline_pr_module"],
+        {"fc1": torch.tensor(6144.0)},
+    )
+    assert metrics["structured_bops_compression_rate_pr_module"].keys() == {"fc1"}
+
+
+def test_structured_bops_include_parent_matches_default_values() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    full_metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_module_names=True,
+        log_total_bops=True,
+        log_compression_rate=True,
+    ).track()
+    included_metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        include=[model],
+        log_module_names=True,
+        log_total_bops=True,
+        log_compression_rate=True,
+    ).track()
+
+    assert included_metrics["structured_bops_module_names"] == full_metrics[
+        "structured_bops_module_names"
+    ]
+    torch.testing.assert_close(
+        included_metrics["structured_bops"],
+        full_metrics["structured_bops"],
+    )
+    torch.testing.assert_close(
+        included_metrics["structured_bops_baseline"],
+        full_metrics["structured_bops_baseline"],
+    )
+    torch.testing.assert_close(
+        included_metrics["structured_bops_compression"],
+        full_metrics["structured_bops_compression"],
+    )
+    torch.testing.assert_close(
+        included_metrics["structured_bops_compression_rate"],
+        full_metrics["structured_bops_compression_rate"],
+    )
+    _assert_tensor_dict_close(
+        included_metrics["structured_bops_pr_module"],
+        full_metrics["structured_bops_pr_module"],
+    )
+    _assert_tensor_dict_close(
+        included_metrics["structured_bops_baseline_pr_module"],
+        full_metrics["structured_bops_baseline_pr_module"],
+    )
+    _assert_tensor_dict_close(
+        included_metrics["structured_bops_compression_rate_pr_module"],
+        full_metrics["structured_bops_compression_rate_pr_module"],
+    )
+
+
+def test_structured_bops_include_and_ignore_same_module_raises() -> None:
+    model, groups = _model_and_groups()
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    with pytest.raises(
+        ValueError,
+        match="Consumer filters removed all canonical members",
+    ):
+        tracker.create_tracker(
+            TrackerType.STRUCTURED_BOPS,
+            include=[model.fc1],
+            ignore=[model.fc1],
+        )
+
+
+def test_structured_bops_include_parent_ignore_child_keeps_fc1() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        include=[model],
+        ignore=[model.fc2],
+        log_module_names=True,
+        log_total_bops=True,
+    ).track()
+
+    assert metrics["structured_bops_module_names"] == ("fc1",)
+    _assert_tensor_dict_close(
+        metrics["structured_bops_pr_module"],
+        {"fc1": torch.tensor(64.0)},
+    )
+
+
 def test_structured_bops_metric_module_names_follow_context() -> None:
     model, groups = _model_and_groups()
     model.fc1.activation_bitrate = 8
@@ -339,9 +456,9 @@ def test_filtering_keeps_group_index_space_stable() -> None:
     model, groups = _model_and_groups()
     tracker = WeightTracker(model, groups=groups)
 
-    filtered_groups = without_ignored_canonical_members(
+    filtered_groups = filter_canonical_members(
         tracker.canonical_groups,
-        ModuleIgnore([model.fc2]),
+        ConsumerFilter(ignore=[model.fc2]),
     )
 
     assert [

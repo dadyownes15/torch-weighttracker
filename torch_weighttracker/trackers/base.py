@@ -6,7 +6,7 @@ import torch
 from torch import nn
 
 from torch_weighttracker.calculations import CalcType, CalculationContext
-from torch_weighttracker.consumer_ignore import IgnoreItem
+from torch_weighttracker.consumer_ignore import FilterItem
 
 
 class TrackerType(str, Enum):
@@ -22,7 +22,8 @@ class BaseTracker(nn.Module, ABC):
         cls,
         owner,
         *,
-        ignore: Iterable[IgnoreItem] = (),
+        include: Iterable[FilterItem] = (),
+        ignore: Iterable[FilterItem] = (),
         **kwargs,
     ) -> CalculationContext | None:
         return None

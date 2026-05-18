@@ -14,7 +14,7 @@ from torch_weighttracker.canonical_units import (
     CanonicalUnitGroup,
     canonicalize_groups,
 )
-from torch_weighttracker.consumer_ignore import IgnoreItem
+from torch_weighttracker.consumer_ignore import FilterItem
 from torch_weighttracker.extractors.codeq_bitrate_extractor import (
     ModuleBitrateExtractor,
 )
@@ -310,7 +310,8 @@ class WeightTracker:
         self,
         tracker_type: TrackerType,
         *,
-        ignore: Iterable[IgnoreItem] = (),
+        include: Iterable[FilterItem] = (),
+        ignore: Iterable[FilterItem] = (),
         **kwargs,
     ):
         """
@@ -326,8 +327,12 @@ class WeightTracker:
 
         Args:
             tracker_type: The tracker type or string value to create.
-            ignore: Module instances or module types to remove from this
-                tracker's calculation context. StructuredBOPs removes matching
+            include: Optional module instances or module types to keep in this
+                tracker's calculation context. Module instances include their
+                descendants.
+            ignore: Optional module instances or module types to remove from
+                this tracker's calculation context. Ignore wins when a module
+                matches both include and ignore. StructuredBOPs filters both
                 canonical members and weighted modules, so per-module metrics,
                 module names, and compression logs follow the filtered context.
             **kwargs: Tracker-specific options. Unsupported kwargs raise
@@ -347,7 +352,12 @@ class WeightTracker:
         """
         tracker_type = TrackerType(tracker_type)
         tracker_cls = tracker_class_for_type(tracker_type)
-        context = tracker_cls.calculation_context(self, ignore=ignore, **kwargs)
+        context = tracker_cls.calculation_context(
+            self,
+            include=include,
+            ignore=ignore,
+            **kwargs,
+        )
         if context is not None:
             self._validate_consumer_context(context)
         tracker_kwargs = tracker_cls.constructor_kwargs(
@@ -367,12 +377,32 @@ class WeightTracker:
         self,
         regularizer_type: RegularizerType,
         *,
-        ignore: Iterable[IgnoreItem] = (),
+        include: Iterable[FilterItem] = (),
+        ignore: Iterable[FilterItem] = (),
         **kwargs,
     ):
+        """
+        Create and register a regularizer.
+
+        Args:
+            regularizer_type: The regularizer type or string value to create.
+            include: Optional module instances or module types to keep in this
+                regularizer's calculation context. Module instances include
+                their descendants.
+            ignore: Optional module instances or module types to remove from
+                this regularizer's calculation context. Ignore wins when a
+                module matches both include and ignore.
+            **kwargs: Regularizer-specific options. Unsupported kwargs raise
+                TypeError from the regularizer constructor.
+        """
         regularizer_type = RegularizerType(regularizer_type)
         regularizer_cls = regularizer_class_for_type(regularizer_type)
-        context = regularizer_cls.calculation_context(self, ignore=ignore, **kwargs)
+        context = regularizer_cls.calculation_context(
+            self,
+            include=include,
+            ignore=ignore,
+            **kwargs,
+        )
         if context is not None:
             self._validate_consumer_context(context)
         calculations = self.ensure_calculations(
@@ -431,7 +461,7 @@ class WeightTracker:
             len(group.members) == 0 for group in context.canonical_groups
         ):
             raise ValueError(
-                "Consumer ignore removed all canonical members from the calculation "
+                "Consumer filters removed all canonical members from the calculation "
                 "context."
             )
 
@@ -440,7 +470,7 @@ class WeightTracker:
             and len(context.weighted_modules) == 0
         ):
             raise ValueError(
-                "Consumer ignore removed all weighted modules from the calculation "
+                "Consumer filters removed all weighted modules from the calculation "
                 "context."
             )
 

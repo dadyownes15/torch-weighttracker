@@ -79,6 +79,48 @@ def test_l2_norm_distribution_ignore_is_invariant_to_ignored_weights() -> None:
     )
 
 
+def test_l2_norm_distribution_include_is_invariant_to_excluded_weights() -> None:
+    model, groups = _model_and_groups()
+    tracker = WeightTracker(model, groups=groups)
+    l2_tracker = tracker.create_tracker(
+        TrackerType.L2_NORM_DISTRIBUTION,
+        include=[model.fc1],
+    )
+
+    before = l2_tracker.track()
+
+    torch.testing.assert_close(
+        before["l2_norm_distribution/fc1:prune_out_channels"],
+        torch.tensor([1.0, 0.0, torch.sqrt(torch.tensor(13.0))]),
+    )
+    torch.testing.assert_close(
+        before["l2_norm_distribution/fc2:prune_out_channels"],
+        torch.tensor([0.0]),
+    )
+
+    with torch.no_grad():
+        model.fc2.weight.add_(1000.0)
+
+    after_excluded_change = l2_tracker.track()
+    torch.testing.assert_close(
+        after_excluded_change["l2_norm_distribution/fc1:prune_out_channels"],
+        before["l2_norm_distribution/fc1:prune_out_channels"],
+    )
+    torch.testing.assert_close(
+        after_excluded_change["l2_norm_distribution/fc2:prune_out_channels"],
+        before["l2_norm_distribution/fc2:prune_out_channels"],
+    )
+
+    with torch.no_grad():
+        model.fc1.weight.add_(1.0)
+
+    after_included_change = l2_tracker.track()
+    assert not torch.allclose(
+        after_included_change["l2_norm_distribution/fc1:prune_out_channels"],
+        before["l2_norm_distribution/fc1:prune_out_channels"],
+    )
+
+
 def test_l2_norm_distribution_names_attention_head_dim_groups() -> None:
     model = TinyQKVProjectionBlock()
     groups = canonicalize_groups(

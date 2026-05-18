@@ -12,7 +12,6 @@ from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.canonical_units import canonicalize_groups
 from torch_weighttracker.regularizers import RegularizerType
 from torch_weighttracker.regularizers.group_lasso import GroupLasso
-from torch_weighttracker.weight_tracker import WeightTracker
 from torch_weighttracker.torch_pruning.pruner.function import (
     prune_batchnorm_out_channels,
     prune_conv_in_channels,
@@ -20,6 +19,7 @@ from torch_weighttracker.torch_pruning.pruner.function import (
     prune_linear_in_channels,
     prune_linear_out_channels,
 )
+from torch_weighttracker.weight_tracker import WeightTracker
 
 
 class ParameterCalculation(nn.Module):
@@ -171,6 +171,31 @@ def test_group_lasso_linear_chain_exact_values_and_gradients() -> None:
             ]
         ),
     )
+
+
+def test_group_lasso_include_filters_members_not_weighted_modules() -> None:
+    model, groups = _model_and_groups()
+    tracker = WeightTracker(model, groups=groups)
+
+    context = GroupLasso.calculation_context(tracker, include=[model.fc1])
+    assert context is not None
+    assert context.weighted_modules == tracker._get_weighted_modules()
+
+    regularizer = tracker.create_regularizer(
+        RegularizerType.GROUP_LASSO,
+        include=[model.fc1],
+    )
+    before = regularizer()
+
+    with torch.no_grad():
+        model.fc2.weight.add_(1000.0)
+
+    torch.testing.assert_close(regularizer(), before)
+
+    with torch.no_grad():
+        model.fc1.weight.add_(1.0)
+
+    assert not torch.allclose(regularizer(), before)
 
 
 class ConvBnChain(nn.Module):

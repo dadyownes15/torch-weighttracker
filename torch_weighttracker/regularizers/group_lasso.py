@@ -4,9 +4,9 @@ import torch
 
 from torch_weighttracker.calculations import CalcType, CalculationContext
 from torch_weighttracker.consumer_ignore import (
-    IgnoreItem,
-    ModuleIgnore,
-    without_ignored_canonical_members,
+    ConsumerFilter,
+    FilterItem,
+    filter_canonical_members,
 )
 from torch_weighttracker.regularizers.base import BaseRegularizer, RegularizerType
 
@@ -23,17 +23,18 @@ class GroupLasso(BaseRegularizer):
         cls,
         owner,
         *,
-        ignore: Iterable[IgnoreItem] = (),
+        include: Iterable[FilterItem] = (),
+        ignore: Iterable[FilterItem] = (),
         **kwargs,
     ) -> CalculationContext | None:
-        ignored = ModuleIgnore(ignore)
-        if not ignored:
+        filters = ConsumerFilter(include=include, ignore=ignore)
+        if not filters:
             return None
 
         return owner._calculation_context(
-            canonical_groups=without_ignored_canonical_members(
+            canonical_groups=filter_canonical_members(
                 owner.canonical_groups,
-                ignored,
+                filters,
             ),
         )
 

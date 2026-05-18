@@ -89,6 +89,7 @@ from torch_weighttracker.trackers import TrackerType
 
 metrics = tracker.create_tracker(
     TrackerType.STRUCTURED_BOPS,
+    include=[model.layer3, model.layer4],
     ignore=[torch.nn.BatchNorm2d],
 ).track()
 
@@ -97,6 +98,7 @@ print(metrics["structured_bops_compression_rate_pr_module"])
 
 raw_metrics = tracker.create_tracker(
     TrackerType.STRUCTURED_BOPS,
+    include=[model.layer3, model.layer4],
     ignore=[torch.nn.BatchNorm2d],
     log_total_bops=True,
 ).track()
@@ -121,8 +123,8 @@ The main API is `WeightTracker`. Internally it is split into a few layers:
    per-unit L2 norm, active units, parameters per unit, active MACs, and bitrates.
    Calculations can depend on each other and cache constant results.
 5. Consumers: `regularizers/` and `trackers/` request the calculations they need,
-   optionally with an `ignore` context for excluding modules from a specific
-   metric or regularizer.
+   optionally with `include` and `ignore` contexts for selecting modules in a
+   specific metric or regularizer.
 
 The result is a small public surface with a reusable internal graph:
 

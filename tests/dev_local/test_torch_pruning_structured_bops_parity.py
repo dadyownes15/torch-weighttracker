@@ -592,7 +592,9 @@ def _mac_tensor_for_names(
 
 def _axis_tensor_for_names(model: nn.Module, names: tuple[str, ...]) -> torch.Tensor:
     modules = dict(model.named_modules())
-    return torch.tensor([_module_axes(modules[name]) for name in names])
+    return torch.tensor(
+        [axis for name in names for axis in _module_axes(modules[name])]
+    )
 
 
 def _module_axes(module: nn.Module) -> tuple[float, float]:
@@ -601,7 +603,7 @@ def _module_axes(module: nn.Module) -> tuple[float, float]:
     if isinstance(module, nn.Linear):
         return float(module.in_features), float(module.out_features)
     if isinstance(module, nn.modules.batchnorm._BatchNorm):
-        return float(module.num_features), float(module.num_features)
+        return -1.0, float(module.num_features)
     raise AssertionError(f"Unsupported tracked module type: {type(module).__name__}")
 
 

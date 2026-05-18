@@ -7,15 +7,24 @@ import torch
 import torch.nn as nn
 
 from torch_weighttracker.calculations.base import CalcType
-from torch_weighttracker.calculations.context import group_input_spec
-from torch_weighttracker.calculations.pipeline_calc import PipelineCalc
-from torch_weighttracker.calculations.spec import CalculationSpec
-from torch_weighttracker.canonical_units import CanonicalMember, CanonicalUnitGroup, canonical_members
-from torch_weighttracker.extractors.extractor import SourceSpec, TensorSpec, TensorValue, ValueTensorRef
 from torch_weighttracker.calculations.calcs.unit_delta_to_module_axis import (
     axis_multiplier_for_member,
 )
-from torch_weighttracker.plans.mapping_plan import module_axis_for_member
+from torch_weighttracker.calculations.context import group_input_spec
+from torch_weighttracker.calculations.pipeline_calc import PipelineCalc
+from torch_weighttracker.calculations.spec import CalculationSpec
+from torch_weighttracker.canonical_units import (
+    CanonicalMember,
+    CanonicalUnitGroup,
+    canonical_members,
+)
+from torch_weighttracker.extractors.extractor import (
+    SourceSpec,
+    TensorSpec,
+    TensorValue,
+    ValueTensorRef,
+)
+from torch_weighttracker.plans.module_axis_plan import module_axis_for_member
 from torch_weighttracker.reductions.builder import (
     IndexSelection,
     PipelinePlan,

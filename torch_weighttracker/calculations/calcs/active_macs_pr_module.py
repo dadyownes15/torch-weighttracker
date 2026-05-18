@@ -20,19 +20,25 @@ class ActiveMacsPrModuleCalc(Calculation):
 
     calculation_type = CalcType.ACTIVE_MACS_PR_MODULE
 
-    def __init__(self, dependencies: Mapping[CalcType, nn.Module]) -> None:
-        super().__init__(dependencies)
-
     def forward(self) -> torch.Tensor:
         active_units = self.compute(CalcType.UNIT_ACTIVE_MASK)
         baseline_axes = self.compute(CalcType.BASELINE_MODULE_AXES)
         baseline_macs = self.compute(CalcType.BASELINE_MACS_PR_MODULE)
+        cost_axis_indices = self.compute(CalcType.MODULE_AXIS_COST_INDICES)
         axis_delta = self.compute(
             CalcType.UNIT_DELTA_TO_MODULE_AXIS,
             active_units,
-        ).view_as(baseline_axes)
+        )
         active_axes = baseline_axes + axis_delta
-        return baseline_macs * (active_axes / baseline_axes).prod(dim=1)
+        active_cost_axes = active_axes.index_select(0, cost_axis_indices)
+        baseline_cost_axes = baseline_axes.index_select(0, cost_axis_indices)
+        ratios = active_cost_axes / baseline_cost_axes
+        module_scale = _product_by_module(
+            ratios,
+            cost_axis_indices // 2,
+            num_modules=baseline_macs.numel(),
+        )
+        return baseline_macs * module_scale
 
 
 def create_active_macs_pr_module_calc(
@@ -43,6 +49,24 @@ def create_active_macs_pr_module_calc(
     return ActiveMacsPrModuleCalc(dependencies)
 
 
+def _product_by_module(
+    values: torch.Tensor,
+    module_indices: torch.Tensor,
+    *,
+    num_modules: int,
+) -> torch.Tensor:
+    result = values.new_ones(num_modules)
+    if values.numel() == 0:
+        return result
+    return result.scatter_reduce_(
+        0,
+        module_indices,
+        values,
+        reduce="prod",
+        include_self=True,
+    )
+
+
 CALCULATION_SPEC = CalculationSpec(
     calculation_type=CalcType.ACTIVE_MACS_PR_MODULE,
     required_calculations=(
@@ -50,6 +74,7 @@ CALCULATION_SPEC = CalculationSpec(
         CalcType.UNIT_DELTA_TO_MODULE_AXIS,
         CalcType.BASELINE_MACS_PR_MODULE,
         CalcType.BASELINE_MODULE_AXES,
+        CalcType.MODULE_AXIS_COST_INDICES,
     ),
     create=lambda ctx, deps: create_active_macs_pr_module_calc(
         ctx,

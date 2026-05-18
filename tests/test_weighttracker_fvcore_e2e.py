@@ -87,6 +87,26 @@ class TinyResNetClassifier(nn.Module):
         return self.head(x)
 
 
+class TinyRMSNorm(nn.Module):
+    def __init__(self, hidden_size: int) -> None:
+        super().__init__()
+        self.weight = nn.Parameter(torch.ones(hidden_size))
+
+    def forward(self, x: Tensor) -> Tensor:
+        variance = x.pow(2).mean(dim=-1, keepdim=True)
+        return x * torch.rsqrt(variance + 1e-6) * self.weight
+
+
+class TinyRMSNormLinear(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.norm = TinyRMSNorm(8)
+        self.proj = nn.Linear(8, 4, bias=False)
+
+    def forward(self, x: Tensor) -> Tensor:
+        return self.proj(self.norm(x))
+
+
 def _module_names(model: nn.Module) -> dict[nn.Module, str]:
     return {module: name for name, module in model.named_modules()}
 
@@ -350,6 +370,33 @@ def test_transformer_mlp_prune_axis_counts_match_pruned_fvcore_modules() -> None
     assert by_module["mlp_in"] == _linear_flops(model.mlp_in, leading_elements=8)
     assert by_module["mlp_out"] == _linear_flops(model.mlp_out, leading_elements=8)
     assert by_module["head"] == _linear_flops(model.head, leading_elements=1)
+
+
+def test_rmsnorm_has_feature_axes_and_zero_weighted_macs() -> None:
+    model = TinyRMSNormLinear().eval()
+    example_inputs = torch.randn(1, 4, 8)
+    tracker = WeightTracker(
+        model,
+        example_inputs=example_inputs,
+        unwrapped_parameters=[(model.norm.weight, -1)],
+    )
+
+    names = tracker._calculation_context().weighted_module_names
+    norm_index = names.index("norm")
+    baseline_axes = tracker.get_calculation(CalcType.BASELINE_MODULE_AXES)()
+    baseline_macs = tracker.get_calculation(CalcType.BASELINE_MACS_PR_MODULE)()
+    cost_axis_indices = tracker.get_calculation(CalcType.MODULE_AXIS_COST_INDICES)()
+    active_macs = tracker.get_calculation(CalcType.ACTIVE_MACS_PR_MODULE)()
+    norm_axis_start = norm_index * 2
+
+    torch.testing.assert_close(
+        baseline_axes[norm_axis_start : norm_axis_start + 2],
+        torch.tensor([-1.0, 8.0]),
+    )
+    assert norm_axis_start not in cost_axis_indices.tolist()
+    assert norm_axis_start + 1 in cost_axis_indices.tolist()
+    torch.testing.assert_close(baseline_macs[norm_index], torch.tensor(0.0))
+    torch.testing.assert_close(active_macs[norm_index], torch.tensor(0.0))
 
 
 def test_transformer_attention_head_prune_matches_pruned_fvcore_modules() -> None:

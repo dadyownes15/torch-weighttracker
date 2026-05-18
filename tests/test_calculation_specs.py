@@ -9,6 +9,7 @@ from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.calculations.cached_calc import CachedCalculation
 from torch_weighttracker.canonical_units import canonicalize_groups
 from torch_weighttracker.torch_pruning.pruner.function import (
+    prune_batchnorm_out_channels,
     prune_linear_in_channels,
     prune_linear_out_channels,
 )
@@ -220,7 +221,7 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
     torch.testing.assert_close(axis_delta, torch.tensor([0.0, -6.0, -2.0, 0.0]))
     torch.testing.assert_close(
         baseline_axes,
-        torch.tensor([[4.0, 12.0], [4.0, 4.0]]),
+        torch.tensor([4.0, 12.0, 4.0, 4.0]),
     )
     torch.testing.assert_close(active_macs, torch.tensor([24.0, 8.0]))
     torch.testing.assert_close(module_bops, torch.tensor([24.0, 8.0]))
@@ -253,6 +254,52 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
         torch.tensor([24.0, 8.0]),
     )
     torch.testing.assert_close(metrics["structured_bops"], torch.tensor(32.0))
+
+
+def test_feature_only_module_axis_plan_uses_output_cost_axis() -> None:
+    model = nn.Sequential(nn.BatchNorm2d(4))
+    batchnorm = model[0]
+    with torch.no_grad():
+        batchnorm.weight.copy_(torch.tensor([1.0, 0.0, 1.0, 0.0]))
+
+    groups = canonicalize_groups(
+        (
+            FakeGroup(
+                _member(batchnorm, prune_batchnorm_out_channels, (0, 1, 2, 3)),
+            ),
+        )
+    )
+    tracker = WeightTracker(model, groups=groups)
+    calculations = tracker.ensure_calculations(
+        (
+            CalcType.UNIT_ACTIVE_MASK,
+            CalcType.UNITS_TO_MODULE_AXIS,
+            CalcType.UNIT_DELTA_TO_MODULE_AXIS,
+            CalcType.BASELINE_MODULE_AXES,
+        )
+    )
+
+    active_units = calculations[CalcType.UNIT_ACTIVE_MASK]()
+    module_axis = calculations[CalcType.UNITS_TO_MODULE_AXIS](active_units)
+    axis_delta = calculations[CalcType.UNIT_DELTA_TO_MODULE_AXIS](active_units)
+    baseline_axes = calculations[CalcType.BASELINE_MODULE_AXES]()
+
+    torch.testing.assert_close(active_units, torch.tensor([1.0, 0.0, 1.0, 0.0]))
+    torch.testing.assert_close(baseline_axes, torch.tensor([-1.0, 4.0]))
+    torch.testing.assert_close(module_axis, torch.tensor([0.0, 2.0]))
+    torch.testing.assert_close(axis_delta, torch.tensor([0.0, -2.0]))
+
+
+def test_active_macs_uses_module_axis_cost_indices_calculation() -> None:
+    model, groups = _model_and_groups()
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    active_macs = tracker.get_calculation(CalcType.ACTIVE_MACS_PR_MODULE)
+    cost_indices = tracker.get_calculation(CalcType.MODULE_AXIS_COST_INDICES)
+
+    assert active_macs.calc(CalcType.MODULE_AXIS_COST_INDICES) is cost_indices
+    assert not hasattr(active_macs, "cost_axis_indices")
+    assert not hasattr(active_macs, "cost_axis_module_indices")
 
 
 def test_missing_groups_fail_for_group_required_calculations() -> None:

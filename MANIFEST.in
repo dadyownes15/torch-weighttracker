@@ -3,5 +3,6 @@ include README.md
 include pyproject.toml
 include torch_weighttracker/py.typed
 recursive-include tests *.py
+prune sanity_checks
 prune tests/dev_local
 prune tests/ignored

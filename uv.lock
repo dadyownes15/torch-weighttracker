@@ -1696,7 +1696,10 @@ dev = [
     { name = "twine" },
 ]
 dev-local = [
+    { name = "fvcore" },
+    { name = "timm" },
     { name = "torch-pruning" },
+    { name = "torchvision" },
 ]
 structured-bops = [
     { name = "fvcore" },
@@ -1706,14 +1709,17 @@ structured-bops = [
 requires-dist = [
     { name = "build", marker = "extra == 'dev'", specifier = ">=1.2" },
     { name = "fvcore", marker = "extra == 'dev'" },
+    { name = "fvcore", marker = "extra == 'dev-local'" },
     { name = "fvcore", marker = "extra == 'structured-bops'" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0" },
     { name = "ruff", marker = "extra == 'dev'", specifier = ">=0.6" },
     { name = "timm", marker = "extra == 'dev'", specifier = ">=1.0" },
+    { name = "timm", marker = "extra == 'dev-local'", specifier = ">=1.0" },
     { name = "torch", specifier = ">=2.0" },
     { name = "torch-pruning", marker = "extra == 'dev-local'", specifier = ">=1.6" },
     { name = "torchvision", marker = "extra == 'dev'", specifier = ">=0.15" },
+    { name = "torchvision", marker = "extra == 'dev-local'", specifier = ">=0.15" },
     { name = "twine", marker = "extra == 'dev'", specifier = ">=5.0" },
 ]
 provides-extras = ["structured-bops", "dev", "dev-local"]

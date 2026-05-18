@@ -37,6 +37,9 @@ from torch_weighttracker.calculations.calcs.groups_to_units import (
 from torch_weighttracker.calculations.calcs.l2_norm_pr_unit import (
     CALCULATION_SPEC as L2_NORM_PR_UNIT_CALCULATION_SPEC,
 )
+from torch_weighttracker.calculations.calcs.module_axis_cost_indices import (
+    CALCULATION_SPEC as MODULE_AXIS_COST_INDICES_CALCULATION_SPEC,
+)
 from torch_weighttracker.calculations.calcs.param_pr_unit import (
     CALCULATION_SPEC as PARAM_PR_UNIT_CALCULATION_SPEC,
 )
@@ -74,6 +77,7 @@ _CALCULATION_SPEC_LIST = (
     UNITS_TO_MODULE_AXIS_CALCULATION_SPEC,
     UNIT_DELTA_TO_MODULE_AXIS_CALCULATION_SPEC,
     BASELINE_MODULE_AXES_CALCULATION_SPEC,
+    MODULE_AXIS_COST_INDICES_CALCULATION_SPEC,
     BASELINE_MACS_PR_MODULE_CALCULATION_SPEC,
     ACTIVE_MACS_PR_MODULE_CALCULATION_SPEC,
     BITRATE_PR_MODULE_CALCULATION_SPEC,

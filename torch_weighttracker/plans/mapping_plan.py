@@ -1,13 +1,12 @@
 from __future__ import annotations
 
-from typing import Iterable, cast
+from collections.abc import Iterable
+from typing import cast
 
 import torch
 
 from torch_weighttracker.canonical_units import (
-    CanonicalMember,
     CanonicalUnitGroup,
-    UnitAxis,
 )
 from torch_weighttracker.extractors.extractor import TensorSpec, ValueTensorRef
 from torch_weighttracker.reductions.builder import (
@@ -84,7 +83,3 @@ def create_unit_input_ref(
 
 def total_units(groups: Iterable[CanonicalUnitGroup]) -> int:
     return sum(int(group.length) for group in groups)
-
-
-def module_axis_for_member(member: CanonicalMember) -> int:
-    return 0 if member.unit_axis == UnitAxis.IN_CHANNEL else 1

@@ -196,6 +196,17 @@ For some model architectures, the BOPs calculation may differ from the values re
 
 As a sanity check, I have included notebooks that illustrate these differences by comparing `fvcore.FlopCountAnalysis` on hard-pruned models with WeightTracker on fake-pruned models, where weights are zeroed such that it is equivalent to the hard-pruned. 
 
+Local sanity notebooks compare WeightTracker MAC accounting with physically
+pruned models from Torch-Pruning. These dependencies are optional and are not
+installed with the base package:
+
+```bash
+python -m pip install -e ".[dev-local]"
+```
+
+Then start Jupyter from the repository root and open the notebooks in
+`sanity_checks/`.
+
 ## Architecture
 
 The main API is `WeightTracker`. Internally it is split into a few layers:

@@ -39,6 +39,10 @@ from torch_weighttracker.calculations.calcs.l2_norm_pr_unit import (
     L2NormPrUnit,
     create_l2_norm_pr_unit_calc,
 )
+from torch_weighttracker.calculations.calcs.module_axis_cost_indices import (
+    ModuleAxisCostIndicesCalc,
+    create_module_axis_cost_indices_calc,
+)
 from torch_weighttracker.calculations.calcs.param_pr_unit import (
     ParamPrUnit,
     create_param_pr_unit_calc,
@@ -71,6 +75,7 @@ __all__ = [
     "BaselineMacsPrModuleCalc",
     "BaselineModuleAxesCalc",
     "BaselineParamPrUnitPrGroup",
+    "ModuleAxisCostIndicesCalc",
     "ParamPrUnit",
     "UnitPrGroup",
     "UnitActiveMaskCalc",
@@ -87,6 +92,7 @@ __all__ = [
     "create_group_sizes_calc",
     "create_groups_to_units_calc",
     "create_l2_norm_pr_unit_calc",
+    "create_module_axis_cost_indices_calc",
     "create_param_pr_unit_calc",
     "create_structured_unit_sum_calc",
     "create_unit_active_mask_calc",

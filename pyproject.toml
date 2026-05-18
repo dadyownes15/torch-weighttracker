@@ -41,7 +41,10 @@ dev = [
     "twine>=5.0",
 ]
 dev-local = [
+    "fvcore",
+    "timm>=1.0",
     "torch-pruning>=1.6",
+    "torchvision>=0.15",
 ]
 
 [project.urls]

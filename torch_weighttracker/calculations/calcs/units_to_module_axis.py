@@ -7,14 +7,15 @@ import torch
 import torch.nn as nn
 
 from torch_weighttracker.calculations.base import CalcType
-from torch_weighttracker.calculations.context import calculation_device, calculation_dtype
+from torch_weighttracker.calculations.context import (
+    calculation_device,
+    calculation_dtype,
+)
 from torch_weighttracker.calculations.pipeline_calc import PipelineCalc
 from torch_weighttracker.calculations.spec import CalculationSpec
 from torch_weighttracker.canonical_units import CanonicalUnitGroup, canonical_members
-from torch_weighttracker.plans.mapping_plan import (
-    create_unit_input_ref,
-    module_axis_for_member,
-)
+from torch_weighttracker.plans.mapping_plan import create_unit_input_ref
+from torch_weighttracker.plans.module_axis_plan import module_axis_for_member
 from torch_weighttracker.reductions.builder import (
     IndexSelection,
     PipelinePlan,

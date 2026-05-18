@@ -18,6 +18,7 @@ class CalcType(str, Enum):
     ACTIVE_MACS_PR_MODULE = "active_macs_pr_module"
     BASELINE_MACS_PR_MODULE = "baseline_macs_pr_module"
     BASELINE_MODULE_AXES = "baseline_module_axes"
+    MODULE_AXIS_COST_INDICES = "module_axis_cost_indices"
     UNITS_TO_GROUP = "units_to_group"
     GROUPS_TO_UNITS = "groups_to_units"
     UNIT_ACTIVE_MASK = "unit_active_mask"

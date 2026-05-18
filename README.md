@@ -19,6 +19,8 @@ tracker = WeightTracker(model, example_inputs=torch.randn(1, 4))
 print(tracker.view_structures())
 ```
 
+## TRANSFORMS NOT FULLY SUPPORTED YET
+
 ## Installation
 
 ```bash

@@ -8,11 +8,11 @@ import torch_weighttracker.calculations.calculations as calc_impl
 from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.calculations.cached_calc import CachedCalculation
 from torch_weighttracker.canonical_units import canonicalize_groups
-from torch_weighttracker.weight_tracker import WeightTracker
 from torch_weighttracker.torch_pruning.pruner.function import (
     prune_linear_in_channels,
     prune_linear_out_channels,
 )
+from torch_weighttracker.weight_tracker import WeightTracker
 
 
 class TinyLinearChain(nn.Module):
@@ -95,7 +95,10 @@ def test_weight_tracker_builds_public_calculations_from_specs() -> None:
     assert tracker.get_calculation(CalcType.UNIT_ACTIVE_MASK) is calculations[
         CalcType.UNIT_ACTIVE_MASK
     ]
-    assert isinstance(calculations[CalcType.INIT_UNIT_PR_GROUP_COUNT], CachedCalculation)
+    assert isinstance(
+        calculations[CalcType.INIT_UNIT_PR_GROUP_COUNT],
+        CachedCalculation,
+    )
     assert isinstance(calculations[CalcType.GROUP_CHANGE_EFFECT], CachedCalculation)
     assert isinstance(calculations[CalcType.GROUP_SIZES], CachedCalculation)
     assert not isinstance(calculations[CalcType.ACTIVE_UNITS], CachedCalculation)
@@ -222,10 +225,31 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
     torch.testing.assert_close(active_macs, torch.tensor([24.0, 8.0]))
     torch.testing.assert_close(module_bops, torch.tensor([24.0, 8.0]))
 
-    structured_bops = tracker.create_tracker("structured_bops")
+    structured_bops = tracker.create_tracker("structured_bops", log_total_bops=True)
     metrics = structured_bops.track()
+    assert metrics["structured_bops_pr_module"].keys() == {"qkv", "proj"}
     torch.testing.assert_close(
-        metrics["structured_bops_pr_module"],
+        metrics["structured_bops_pr_module"]["qkv"],
+        torch.tensor(24.0),
+    )
+    torch.testing.assert_close(
+        metrics["structured_bops_pr_module"]["proj"],
+        torch.tensor(8.0),
+    )
+    torch.testing.assert_close(
+        metrics["structured_bops_compression_rate_pr_module"]["qkv"],
+        torch.tensor(1.0 - 24.0 / (48.0 * 32.0 * 32.0)),
+    )
+    torch.testing.assert_close(
+        metrics["structured_bops_compression_rate_pr_module"]["proj"],
+        torch.tensor(1.0 - 8.0 / (16.0 * 32.0 * 32.0)),
+    )
+    torch.testing.assert_close(
+        metrics["structured_bops_compression"],
+        torch.tensor(1.0 - 32.0 / (64.0 * 32.0 * 32.0)),
+    )
+    torch.testing.assert_close(
+        torch.stack(tuple(metrics["structured_bops_pr_module"].values())),
         torch.tensor([24.0, 8.0]),
     )
     torch.testing.assert_close(metrics["structured_bops"], torch.tensor(32.0))

@@ -24,11 +24,13 @@ class StructuredBOPs(BaseTracker):
         *,
         log_module_names: bool = False,
         log_compression_rate: bool = False,
+        log_total_bops: bool = False,
         _module_names: Iterable[str] = (),
     ) -> None:
         super().__init__(calculations=calculations)
         self.log_module_names = log_module_names
         self.log_compression_rate = log_compression_rate
+        self.log_total_bops = log_total_bops
         self.module_names = tuple(_module_names)
 
     @classmethod
@@ -64,9 +66,6 @@ class StructuredBOPs(BaseTracker):
         context: CalculationContext | None = None,
         **kwargs,
     ) -> dict:
-        if not kwargs.get("log_module_names", False):
-            return kwargs
-
         metric_context = (
             context if context is not None else owner._calculation_context()
         )
@@ -83,23 +82,40 @@ class StructuredBOPs(BaseTracker):
 
     def toMetric(self, result):
         total = result.sum()
+        baseline = self._baseline_bops_pr_module()
+        baseline_total = baseline.sum()
+        compression = _compression_rate(total, baseline_total)
+        compression_pr_module = _compression_rate(result, baseline)
+
         metrics = {
-            "structured_bops": total,
-            "structured_bops_pr_module": result,
+            "structured_bops_compression": compression,
+            "structured_bops_compression_rate_pr_module": _named_tensor_values(
+                self.module_names,
+                compression_pr_module,
+            ),
         }
 
         if self.log_module_names:
             metrics["structured_bops_module_names"] = self.module_names
 
-        if self.log_compression_rate:
-            baseline = self._baseline_bops_pr_module()
-            baseline_total = baseline.sum()
-            metrics["structured_bops_baseline"] = baseline_total
-            metrics["structured_bops_baseline_pr_module"] = baseline
-            metrics["structured_bops_compression_rate"] = _compression_rate(
-                total,
-                baseline_total,
+        if self.log_total_bops:
+            metrics.update(
+                {
+                    "structured_bops": total,
+                    "structured_bops_pr_module": _named_tensor_values(
+                        self.module_names,
+                        result,
+                    ),
+                    "structured_bops_baseline": baseline_total,
+                    "structured_bops_baseline_pr_module": _named_tensor_values(
+                        self.module_names,
+                        baseline,
+                    ),
+                }
             )
+
+        if self.log_compression_rate:
+            metrics["structured_bops_compression_rate"] = compression
 
         return metrics
 
@@ -120,3 +136,10 @@ def _compression_rate(active: torch.Tensor, baseline: torch.Tensor) -> torch.Ten
         rate,
         torch.zeros_like(baseline),
     )
+
+
+def _named_tensor_values(
+    module_names: Iterable[str],
+    values: torch.Tensor,
+) -> dict[str, torch.Tensor]:
+    return {name: value for name, value in zip(module_names, values, strict=True)}

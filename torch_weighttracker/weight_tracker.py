@@ -320,6 +320,9 @@ class WeightTracker:
             TrackerType.STRUCTURED_BOPS / "structured_bops":
                 Tracks active structured bit operations from active runtime MACs
                 and per-module activation/weight bitrates.
+            TrackerType.L2_NORM_DISTRIBUTION / "l2_norm_distribution":
+                Tracks each canonical group's per-prune-unit L2 norm
+                distribution.
 
         Args:
             tracker_type: The tracker type or string value to create.
@@ -331,10 +334,12 @@ class WeightTracker:
                 TypeError from the tracker constructor.
 
         StructuredBOPs kwargs:
+            log_total_bops (bool): Include active and baseline structured BOP
+                totals plus per-module BOP dictionaries. Default: False.
             log_module_names (bool): Include "structured_bops_module_names",
-                aligned with "structured_bops_pr_module". Default: False.
-            log_compression_rate (bool): Include baseline structured BOPs and
-                "structured_bops_compression_rate", computed as
+                aligned with per-module metric dictionaries. Default: False.
+            log_compression_rate (bool): Include the legacy
+                "structured_bops_compression_rate" alias, computed as
                 1 - structured_bops / structured_bops_baseline in this
                 tracker's calculation context. The baseline currently uses
                 hard-coded 32-bit activation and weight bitrates. Default:

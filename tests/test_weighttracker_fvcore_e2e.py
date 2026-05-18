@@ -237,19 +237,27 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
     example_inputs = torch.randn(1, 3, 32, 32)
     tracker = WeightTracker(model, example_inputs)
 
-    metrics = tracker.create_tracker(TrackerType.STRUCTURED_BOPS).track()
+    metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_total_bops=True,
+    ).track()
     bitrates = tracker.get_calculation(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
     by_module = _fvcore_by_module(model, example_inputs)
+    actual_pr_module = metrics["structured_bops_pr_module"]
+    actual_values = torch.stack(tuple(actual_pr_module.values()))
     expected = torch.tensor(
         [
             float(by_module[name]) * float(bitrates[index].prod())
             for index, (name, _) in enumerate(tracker._get_weighted_module_entries())
         ],
-        dtype=metrics["structured_bops_pr_module"].dtype,
-        device=metrics["structured_bops_pr_module"].device,
+        dtype=actual_values.dtype,
+        device=actual_values.device,
     )
 
-    torch.testing.assert_close(metrics["structured_bops_pr_module"], expected)
+    assert tuple(actual_pr_module.keys()) == tuple(
+        name for name, _ in tracker._get_weighted_module_entries()
+    )
+    torch.testing.assert_close(actual_values, expected)
     torch.testing.assert_close(metrics["structured_bops"], expected.sum())
 
 

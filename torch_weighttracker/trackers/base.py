@@ -11,6 +11,7 @@ from torch_weighttracker.consumer_ignore import IgnoreItem
 
 class TrackerType(str, Enum):
     STRUCTURED_BOPS = "structured_bops"
+    L2_NORM_DISTRIBUTION = "l2_norm_distribution"
 
 
 class BaseTracker(nn.Module, ABC):
@@ -92,5 +93,12 @@ def tracker_class_for_type(tracker_type: TrackerType | str):
         from torch_weighttracker.trackers.structured_bops import StructuredBOPs
 
         return StructuredBOPs
+
+    if tracker_type == TrackerType.L2_NORM_DISTRIBUTION:
+        from torch_weighttracker.trackers.l2_norm_distribution import (
+            L2NormDistribution,
+        )
+
+        return L2NormDistribution
 
     raise ValueError(f"Unknown tracker type: {tracker_type.value}")

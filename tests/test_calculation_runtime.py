@@ -22,6 +22,7 @@ from torch_weighttracker.reductions.builder import (
 from torch_weighttracker.reductions.ops import IdentityTensorReduction
 from torch_weighttracker.regularizers.group_lasso import GroupLasso
 from torch_weighttracker.trackers.base import BaseTracker
+from torch_weighttracker.trackers.l2_norm_distribution import L2NormDistribution
 from torch_weighttracker.trackers.structured_bops import StructuredBOPs
 
 
@@ -137,7 +138,9 @@ def test_mapped_calculation_allocates_fresh_outputs_and_keeps_index_buffers() ->
 
     assert not hasattr(calculation, "accumulator")
     assert first.data_ptr() != second.data_ptr()
-    assert index_ptrs == tuple(index.data_ptr() for index in calculation.destination_indices)
+    assert index_ptrs == tuple(
+        index.data_ptr() for index in calculation.destination_indices
+    )
     torch.testing.assert_close(first, torch.tensor([1.0, 2.0]))
     torch.testing.assert_close(second, torch.tensor([1.0, 2.0]))
 
@@ -230,7 +233,9 @@ def test_group_lasso_sqrt_weights_param_pr_unit_and_multiplies_l2_norms() -> Non
     l2_norm_pr_unit = ParameterCalculation(torch.tensor([5.0, 7.0, 11.0, 13.0]))
     regularizer = GroupLasso(
         {
-            CalcType.PARAM_PR_UNIT: StaticCalculation(torch.tensor([3.0, 0.0, 3.0, 2.0])),
+            CalcType.PARAM_PR_UNIT: StaticCalculation(
+                torch.tensor([3.0, 0.0, 3.0, 2.0])
+            ),
             CalcType.L2_NORM_PR_UNIT: l2_norm_pr_unit,
         }
     )
@@ -265,3 +270,8 @@ def test_group_lasso_requires_explicit_calculations() -> None:
 def test_structured_bops_requires_explicit_calculations() -> None:
     with pytest.raises(ValueError, match="missing required calculations"):
         StructuredBOPs({})
+
+
+def test_l2_norm_distribution_requires_explicit_calculations() -> None:
+    with pytest.raises(ValueError, match="missing required calculations"):
+        L2NormDistribution({})

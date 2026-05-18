@@ -80,7 +80,7 @@ loss.backward()
 
 ## Structured BOPs
 
-Structured BOPs compares active bit operations against a dense 32-bit baseline:
+Structured BOPs reports compression against a dense 32-bit baseline by default:
 
 ```python
 import torch
@@ -90,12 +90,19 @@ from torch_weighttracker.trackers import TrackerType
 metrics = tracker.create_tracker(
     TrackerType.STRUCTURED_BOPS,
     ignore=[torch.nn.BatchNorm2d],
-    log_compression_rate=True,
 ).track()
 
-print(metrics["structured_bops"])
-print(metrics["structured_bops_baseline"])
-print(metrics["structured_bops_compression_rate"])
+print(metrics["structured_bops_compression"])
+print(metrics["structured_bops_compression_rate_pr_module"])
+
+raw_metrics = tracker.create_tracker(
+    TrackerType.STRUCTURED_BOPS,
+    ignore=[torch.nn.BatchNorm2d],
+    log_total_bops=True,
+).track()
+
+print(raw_metrics["structured_bops"])
+print(raw_metrics["structured_bops_pr_module"])
 ```
 
 ## Architecture

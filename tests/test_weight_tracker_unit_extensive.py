@@ -61,6 +61,23 @@ def test_weight_tracker_builds_groups_from_example_inputs() -> None:
     assert tracker.dependency_graph is not None
 
 
+@pytest.mark.parametrize(
+    "example_inputs",
+    (
+        torch.empty(1, 2, device="meta"),
+        (torch.empty(1, 2, device="meta"),),
+        {"x": torch.empty(1, 2, device="meta")},
+    ),
+)
+def test_weight_tracker_rejects_example_inputs_on_different_device(
+    example_inputs,
+) -> None:
+    model = TinyLinearChain()
+
+    with pytest.raises(ValueError, match="same device as the model"):
+        WeightTracker(model, example_inputs=example_inputs, groups=[])
+
+
 def test_view_structures_returns_canonical_group_printout() -> None:
     model, groups = _model_and_groups()
     tracker = WeightTracker.__new__(WeightTracker)

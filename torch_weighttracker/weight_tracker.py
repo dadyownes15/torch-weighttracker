@@ -1,5 +1,6 @@
-from collections.abc import Iterable
+from collections.abc import Iterable, Mapping
 
+import torch
 import torch.nn as nn
 
 import torch_weighttracker.calculations.calculations as calculation_impl
@@ -65,6 +66,7 @@ class WeightTracker:
         self.ignored_params = [] if ignored_params is None else list(ignored_params)
         self.dependency_graph = None
 
+        _validate_example_inputs_device(model, example_inputs)
         self.example_inputs = example_inputs
 
         if groups is None:
@@ -602,6 +604,71 @@ def _normalize_unwrapped_parameters(unwrapped_parameters):
         return list(unwrapped_parameters.items())
 
     return unwrapped_parameters
+
+
+def _validate_example_inputs_device(model: nn.Module, example_inputs) -> None:
+    if example_inputs is None:
+        return
+
+    model_devices = _model_tensor_devices(model)
+    if len(model_devices) == 0:
+        return
+
+    sorted_model_devices = _sorted_devices(model_devices)
+    if len(sorted_model_devices) != 1:
+        raise ValueError(
+            "WeightTracker requires all model parameters and buffers to live on "
+            "one device. Found model devices: "
+            f"{_format_devices(sorted_model_devices)}."
+        )
+
+    example_devices = _example_input_devices(example_inputs)
+    if len(example_devices) == 0:
+        return
+
+    model_device = sorted_model_devices[0]
+    sorted_example_devices = _sorted_devices(example_devices)
+    if any(device != model_device for device in sorted_example_devices):
+        raise ValueError(
+            "WeightTracker example_inputs must live on the same device as the "
+            f"model. Model device: {model_device}; example_inputs device(s): "
+            f"{_format_devices(sorted_example_devices)}."
+        )
+
+
+def _model_tensor_devices(model: nn.Module) -> set[torch.device]:
+    devices = {parameter.device for parameter in model.parameters()}
+    devices.update(buffer.device for buffer in model.buffers())
+    return devices
+
+
+def _example_input_devices(example_inputs) -> set[torch.device]:
+    devices = set()
+
+    def collect(value) -> None:
+        if isinstance(value, torch.Tensor):
+            devices.add(value.device)
+            return
+
+        if isinstance(value, Mapping):
+            for item in value.values():
+                collect(item)
+            return
+
+        if isinstance(value, tuple | list):
+            for item in value:
+                collect(item)
+
+    collect(example_inputs)
+    return devices
+
+
+def _sorted_devices(devices: Iterable[torch.device]) -> tuple[torch.device, ...]:
+    return tuple(sorted(devices, key=str))
+
+
+def _format_devices(devices: Iterable[torch.device]) -> str:
+    return ", ".join(str(device) for device in devices)
 
 
 def _module_name_map(model: nn.Module) -> dict[nn.Module, str]:

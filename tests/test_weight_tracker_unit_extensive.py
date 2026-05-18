@@ -156,18 +156,10 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
 
     assert metrics.keys() == {
         "structured_bops_compression",
-        "structured_bops_compression_rate_pr_module",
     }
     torch.testing.assert_close(
         metrics["structured_bops_compression"],
         torch.tensor(1.0 - 96.0 / 9216.0),
-    )
-    _assert_tensor_dict_close(
-        metrics["structured_bops_compression_rate_pr_module"],
-        {
-            "fc1": torch.tensor(1.0 - 64.0 / 6144.0),
-            "fc2": torch.tensor(1.0 - 32.0 / 3072.0),
-        },
     )
     assert tracker.trackers == [structured_bops]
 
@@ -303,6 +295,7 @@ def test_structured_bops_include_filters_weighted_modules_and_names() -> None:
         include=[model.fc1],
         log_module_names=True,
         log_total_bops=True,
+        log_layerwise_stats=True,
     ).track()
 
     assert metrics["structured_bops_module_names"] == ("fc1",)
@@ -328,6 +321,7 @@ def test_structured_bops_include_parent_matches_default_values() -> None:
         TrackerType.STRUCTURED_BOPS,
         log_module_names=True,
         log_total_bops=True,
+        log_layerwise_stats=True,
         log_compression_rate=True,
     ).track()
     included_metrics = tracker.create_tracker(
@@ -335,6 +329,7 @@ def test_structured_bops_include_parent_matches_default_values() -> None:
         include=[model],
         log_module_names=True,
         log_total_bops=True,
+        log_layerwise_stats=True,
         log_compression_rate=True,
     ).track()
 
@@ -400,6 +395,7 @@ def test_structured_bops_include_parent_ignore_child_keeps_fc1() -> None:
         ignore=[model.fc2],
         log_module_names=True,
         log_total_bops=True,
+        log_layerwise_stats=True,
     ).track()
 
     assert metrics["structured_bops_module_names"] == ("fc1",)
@@ -534,6 +530,7 @@ def test_structured_bops_metric_module_names_follow_context() -> None:
         TrackerType.STRUCTURED_BOPS,
         ignore=[model.fc2],
         log_module_names=True,
+        log_layerwise_stats=True,
     ).track()
 
     assert full_metrics["structured_bops_module_names"] == ("fc1", "fc2")
@@ -560,30 +557,51 @@ def test_structured_bops_default_compression_follows_context() -> None:
 
     assert full_metrics.keys() == {
         "structured_bops_compression",
-        "structured_bops_compression_rate_pr_module",
     }
     torch.testing.assert_close(
         full_metrics["structured_bops_compression"],
         torch.tensor(1.0 - 64.0 / 9216.0),
     )
-    _assert_tensor_dict_close(
-        full_metrics["structured_bops_compression_rate_pr_module"],
-        {
-            "fc1": torch.tensor(1.0 - 64.0 / 6144.0),
-            "fc2": torch.tensor(1.0),
-        },
-    )
     assert filtered_metrics.keys() == {
         "structured_bops_compression",
-        "structured_bops_compression_rate_pr_module",
     }
     torch.testing.assert_close(
         filtered_metrics["structured_bops_compression"],
         torch.tensor(1.0 - 64.0 / 6144.0),
     )
+
+
+def test_structured_bops_layerwise_stats_are_opt_in() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+
+    total_only = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_total_bops=True,
+    ).track()
+    layerwise = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_layerwise_stats=True,
+    ).track()
+
+    assert total_only.keys() == {
+        "structured_bops_compression",
+        "structured_bops",
+        "structured_bops_baseline",
+    }
+    assert layerwise.keys() == {
+        "structured_bops_compression",
+        "structured_bops_compression_rate_pr_module",
+    }
     _assert_tensor_dict_close(
-        filtered_metrics["structured_bops_compression_rate_pr_module"],
-        {"fc1": torch.tensor(1.0 - 64.0 / 6144.0)},
+        layerwise["structured_bops_compression_rate_pr_module"],
+        {
+            "fc1": torch.tensor(1.0 - 64.0 / 6144.0),
+            "fc2": torch.tensor(1.0 - 32.0 / 3072.0),
+        },
     )
 
 
@@ -597,6 +615,7 @@ def test_structured_bops_total_bops_logging_is_opt_in() -> None:
     metrics = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
         log_total_bops=True,
+        log_layerwise_stats=True,
         log_compression_rate=True,
     ).track()
 

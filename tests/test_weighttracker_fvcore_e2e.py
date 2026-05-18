@@ -260,6 +260,7 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
     metrics = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
         log_total_bops=True,
+        log_layerwise_stats=True,
     ).track()
     bitrates = tracker.get_calculation(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
     by_module = _fvcore_by_module(model, example_inputs)

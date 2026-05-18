@@ -226,7 +226,11 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
     torch.testing.assert_close(active_macs, torch.tensor([24.0, 8.0]))
     torch.testing.assert_close(module_bops, torch.tensor([24.0, 8.0]))
 
-    structured_bops = tracker.create_tracker("structured_bops", log_total_bops=True)
+    structured_bops = tracker.create_tracker(
+        "structured_bops",
+        log_total_bops=True,
+        log_layerwise_stats=True,
+    )
     metrics = structured_bops.track()
     assert metrics["structured_bops_pr_module"].keys() == {"qkv", "proj"}
     torch.testing.assert_close(

@@ -96,17 +96,18 @@ metrics = tracker.create_tracker(
 ).track()
 
 print(metrics["structured_bops_compression"])
-print(metrics["structured_bops_compression_rate_pr_module"])
 
 raw_metrics = tracker.create_tracker(
     TrackerType.STRUCTURED_BOPS,
     include=[model.layer3, model.layer4],
     ignore=[torch.nn.BatchNorm2d],
     log_total_bops=True,
+    log_layerwise_stats=True,
 ).track()
 
 print(raw_metrics["structured_bops"])
 print(raw_metrics["structured_bops_pr_module"])
+print(raw_metrics["structured_bops_compression_rate_pr_module"])
 ```
 
 `create_tracker` accepts a single `TrackerType`/string or a list of tracker

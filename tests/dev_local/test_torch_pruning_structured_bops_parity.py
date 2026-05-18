@@ -442,6 +442,7 @@ def _tracker_snapshot(
         ignore=ignore,
         log_total_bops=True,
         log_module_names=True,
+        log_layerwise_stats=True,
         log_compression_rate=True,
     )
     metrics = structured_bops.track()

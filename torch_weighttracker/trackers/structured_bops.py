@@ -26,12 +26,14 @@ class StructuredBOPs(BaseTracker):
         log_module_names: bool = False,
         log_compression_rate: bool = False,
         log_total_bops: bool = False,
+        log_layerwise_stats: bool = False,
         _module_names: Iterable[str] = (),
     ) -> None:
         super().__init__(calculations=calculations)
         self.log_module_names = log_module_names
         self.log_compression_rate = log_compression_rate
         self.log_total_bops = log_total_bops
+        self.log_layerwise_stats = log_layerwise_stats
         self.module_names = tuple(_module_names)
 
     @classmethod
@@ -86,30 +88,39 @@ class StructuredBOPs(BaseTracker):
 
         metrics = {
             "structured_bops_compression": compression,
-            "structured_bops_compression_rate_pr_module": _named_tensor_values(
-                self.module_names,
-                compression_pr_module,
-            ),
         }
 
         if self.log_module_names:
             metrics["structured_bops_module_names"] = self.module_names
 
+        if self.log_layerwise_stats:
+            metrics["structured_bops_compression_rate_pr_module"] = (
+                _named_tensor_values(
+                    self.module_names,
+                    compression_pr_module,
+                )
+            )
+
         if self.log_total_bops:
             metrics.update(
                 {
                     "structured_bops": total,
-                    "structured_bops_pr_module": _named_tensor_values(
-                        self.module_names,
-                        result,
-                    ),
                     "structured_bops_baseline": baseline_total,
-                    "structured_bops_baseline_pr_module": _named_tensor_values(
-                        self.module_names,
-                        baseline,
-                    ),
                 }
             )
+            if self.log_layerwise_stats:
+                metrics.update(
+                    {
+                        "structured_bops_pr_module": _named_tensor_values(
+                            self.module_names,
+                            result,
+                        ),
+                        "structured_bops_baseline_pr_module": _named_tensor_values(
+                            self.module_names,
+                            baseline,
+                        ),
+                    }
+                )
 
         if self.log_compression_rate:
             metrics["structured_bops_compression_rate"] = compression

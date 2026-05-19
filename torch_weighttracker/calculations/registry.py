@@ -22,6 +22,9 @@ from torch_weighttracker.calculations.calcs.baseline_param_pr_unit_pr_group impo
 from torch_weighttracker.calculations.calcs.bitrate_pr_module import (
     CALCULATION_SPEC as BITRATE_PR_MODULE_CALCULATION_SPEC,
 )
+from torch_weighttracker.calculations.calcs.block_2_4_sparsity import (
+    CALCULATION_SPEC as BLOCK_2_4_SPARSITY_CALCULATION_SPEC,
+)
 from torch_weighttracker.calculations.calcs.group_change_effect import (
     CALCULATION_SPEC as GROUP_CHANGE_EFFECT_CALCULATION_SPEC,
 )
@@ -82,6 +85,7 @@ _CALCULATION_SPEC_LIST = (
     ACTIVE_MACS_PR_MODULE_CALCULATION_SPEC,
     BITRATE_PR_MODULE_CALCULATION_SPEC,
     UNSTRUCTURED_SPARSITY_PR_MODULE_CALCULATION_SPEC,
+    BLOCK_2_4_SPARSITY_CALCULATION_SPEC,
     L2_NORM_PR_UNIT_CALCULATION_SPEC,
     STRUCTURED_UNIT_SUM_CALCULATION_SPEC,
 )

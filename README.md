@@ -226,6 +226,35 @@ Values are fractions in `[0, 1]`. Parametrized fake quantization is measured
 through the effective `module.weight`, so quantized zeros count as sparse
 weights.
 
+## NVIDIA 2:4 Sparsity
+
+NVIDIA 2:4 sparsity reports block eligibility for supported weighted layers.
+Linear and `MultiheadAttention` projection weights are grouped in contiguous
+blocks of four along the input axis. Convolution weights shaped `[K, C, ...]`
+are grouped along `C` for each output/spatial position.
+
+```python
+import torch
+
+from torch_weighttracker.trackers import TrackerType
+
+metrics = tracker.create_tracker(
+    TrackerType.NVIDIA_2_4_SPARSITY,
+    include=[model.layer3, model.layer4],
+    ignore=[torch.nn.BatchNorm2d],
+    log_layerwise_stats=True,
+).track()
+
+print(metrics["nvidia_2_4_sparsity/strict_block_fraction"])
+print(metrics["nvidia_2_4_sparsity/nvidia_eligible_block_fraction"])
+print(metrics["nvidia_2_4_sparsity/tail_elements"])
+```
+
+The strict fraction counts complete 4-value blocks with exactly two zeros. The
+NVIDIA-eligible fraction counts blocks with at least two zeros, matching the
+TensorRT eligibility rule. Tail elements are reported separately and prevent a
+layer from counting as strict or eligible.
+
 ## Group Pruning Summary
 
 Group pruning summary reports pruned canonical units and group-attributed

@@ -13,6 +13,7 @@ class CalcType(str, Enum):
     L2_NORM_PR_UNIT = "l2_norm_pr_unit"
     BITRATE_PR_MODULE = "bitrate_pr_module"
     UNSTRUCTURED_SPARSITY_PR_MODULE = "unstructured_sparsity_pr_module"
+    BLOCK_2_4_SPARSITY = "2_4_block_sparsity"
     UNITS_TO_MODULE_AXIS = "units_to_module_axis"
     UNIT_DELTA_TO_MODULE_AXIS = "unit_delta_to_module_axis"
     ACTIVE_MACS_PR_MODULE = "active_macs_pr_module"

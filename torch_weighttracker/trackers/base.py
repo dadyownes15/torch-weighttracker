@@ -13,6 +13,7 @@ class TrackerType(str, Enum):
     STRUCTURED_BOPS = "structured_bops"
     L2_NORM_DISTRIBUTION = "l2_norm_distribution"
     UNSTRUCTURED_SPARSITY = "unstructured_sparsity"
+    NVIDIA_2_4_SPARSITY = "nvidia_2_4_sparsity"
     GROUP_PRUNING_SUMMARY = "group_pruning_summary"
 
 
@@ -144,6 +145,13 @@ def tracker_class_for_type(tracker_type: TrackerTypeInput):
         )
 
         return UnstructuredSparsity
+
+    if tracker_type == TrackerType.NVIDIA_2_4_SPARSITY:
+        from torch_weighttracker.trackers.nvidia_2_4_sparsity import (
+            Nvidia24Sparsity,
+        )
+
+        return Nvidia24Sparsity
 
     if tracker_type == TrackerType.GROUP_PRUNING_SUMMARY:
         from torch_weighttracker.trackers.group_pruning_summary import (

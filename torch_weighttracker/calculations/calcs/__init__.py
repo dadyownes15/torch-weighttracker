@@ -22,6 +22,10 @@ from torch_weighttracker.calculations.calcs.baseline_param_pr_unit_pr_group impo
 from torch_weighttracker.calculations.calcs.bitrate_pr_module import (
     create_bitrate_pr_module_calc,
 )
+from torch_weighttracker.calculations.calcs.block_2_4_sparsity import (
+    Block24SparsityCalc,
+    create_block_2_4_sparsity_calc,
+)
 from torch_weighttracker.calculations.calcs.group_change_effect import (
     create_group_change_effect_calc,
 )
@@ -77,6 +81,7 @@ __all__ = [
     "BaselineParamPrUnitPrGroup",
     "ModuleAxisCostIndicesCalc",
     "ParamPrUnit",
+    "Block24SparsityCalc",
     "UnitPrGroup",
     "UnitActiveMaskCalc",
     "UnstructuredSparsityPrModuleCalc",
@@ -94,6 +99,7 @@ __all__ = [
     "create_l2_norm_pr_unit_calc",
     "create_module_axis_cost_indices_calc",
     "create_param_pr_unit_calc",
+    "create_block_2_4_sparsity_calc",
     "create_structured_unit_sum_calc",
     "create_unit_active_mask_calc",
     "create_unit_delta_to_module_axis_calc",

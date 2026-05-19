@@ -334,6 +334,16 @@ class WeightTracker:
                 Tracks exact zero-weight sparsity as a global weighted fraction
                 plus per-layer fractions. Output includes
                 "unstructured_sparsity" and "layers".
+            TrackerType.NVIDIA_2_4_SPARSITY / "nvidia_2_4_sparsity":
+                Tracks strict NVIDIA 2:4 sparsity over contiguous groups of
+                four weights along each supported layer's reduction axis.
+                Output includes
+                "nvidia_2_4_sparsity/strict_block_fraction",
+                "nvidia_2_4_sparsity/nvidia_eligible_block_fraction",
+                "nvidia_2_4_sparsity/strict_layers",
+                "nvidia_2_4_sparsity/nvidia_eligible_layers",
+                "nvidia_2_4_sparsity/total_layers", and
+                "nvidia_2_4_sparsity/tail_elements".
             TrackerType.GROUP_PRUNING_SUMMARY / "group_pruning_summary":
                 Tracks flat W&B-friendly pruned unit and group-attributed
                 pruned parameter counts. Output includes
@@ -346,7 +356,8 @@ class WeightTracker:
                 create together. Single values return one tracker. Iterable
                 values return a list of trackers in the requested order.
                 Valid strings are "structured_bops", "l2_norm_distribution",
-                "unstructured_sparsity", and "group_pruning_summary".
+                "unstructured_sparsity", "nvidia_2_4_sparsity", and
+                "group_pruning_summary".
             include: Optional module instances or module types to keep in this
                 tracker's calculation context. Module instances include their
                 descendants.
@@ -385,6 +396,29 @@ class WeightTracker:
 
         L2NormDistribution and UnstructuredSparsity have no public
         tracker-specific kwargs.
+
+        Nvidia24Sparsity kwargs:
+            log_layerwise_stats (bool): Include flat per-module metrics under
+                "nvidia_2_4_sparsity/layers/<module_name>/...". Default:
+                False.
+
+        Nvidia24Sparsity output:
+            "nvidia_2_4_sparsity/strict_block_fraction": Fraction of complete
+                4-value blocks with exactly two zeros.
+            "nvidia_2_4_sparsity/nvidia_eligible_block_fraction": Fraction of
+                complete 4-value blocks with at least two zeros, matching
+                NVIDIA/TensorRT eligibility.
+            "nvidia_2_4_sparsity/strict_layers": Number of supported layers
+                whose complete blocks are all strict and that have no tail
+                elements.
+            "nvidia_2_4_sparsity/nvidia_eligible_layers": Number of supported
+                layers whose complete blocks are all NVIDIA-eligible and that
+                have no tail elements.
+            "nvidia_2_4_sparsity/total_layers": Number of supported measured
+                layers. Supported layers are Linear, Conv1d/2d/3d, and
+                MultiheadAttention projection weights.
+            "nvidia_2_4_sparsity/tail_elements": Count of reduction-axis
+                elements not covered by complete 4-value blocks.
 
         GroupPruningSummary output:
             "group_pruning/pruned_units": Total pruned canonical units.

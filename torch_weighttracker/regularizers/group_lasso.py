@@ -39,6 +39,15 @@ class GroupLasso(BaseRegularizer):
         )
 
     def forward(self) -> torch.Tensor:
-        param_pr_unit = self.compute(CalcType.PARAM_PR_UNIT)
         l2_norm_pr_unit = self.compute(CalcType.L2_NORM_PR_UNIT)
+        param_calc = self.calc(CalcType.PARAM_PR_UNIT)
+        forward_from_l2_norm_pr_unit = getattr(
+            param_calc,
+            "forward_from_l2_norm_pr_unit",
+            None,
+        )
+        if forward_from_l2_norm_pr_unit is None:
+            param_pr_unit = param_calc()
+        else:
+            param_pr_unit = forward_from_l2_norm_pr_unit(l2_norm_pr_unit)
         return (param_pr_unit.sqrt() * l2_norm_pr_unit).sum()

@@ -17,6 +17,12 @@ class ParamPrUnit(Calculation):
 
     def forward(self) -> torch.Tensor:
         l2_norm_pr_unit = self.compute(CalcType.L2_NORM_PR_UNIT)
+        return self.forward_from_l2_norm_pr_unit(l2_norm_pr_unit)
+
+    def forward_from_l2_norm_pr_unit(
+        self,
+        l2_norm_pr_unit: torch.Tensor,
+    ) -> torch.Tensor:
         active_unit_mask = l2_norm_pr_unit.gt(0).to(dtype=l2_norm_pr_unit.dtype)
 
         active_units_pr_group = self.compute(

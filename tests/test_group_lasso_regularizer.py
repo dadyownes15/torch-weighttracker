@@ -26,8 +26,31 @@ class ParameterCalculation(nn.Module):
     def __init__(self, value: torch.Tensor) -> None:
         super().__init__()
         self.value = nn.Parameter(value)
+        self.forward_calls = 0
 
     def forward(self) -> torch.Tensor:
+        self.forward_calls += 1
+        return self.value
+
+
+class ReusableParamCalculation(nn.Module):
+    def __init__(self, value: torch.Tensor) -> None:
+        super().__init__()
+        self.value = nn.Parameter(value)
+        self.forward_calls = 0
+        self.forward_from_l2_norm_calls = 0
+        self.seen_l2_norm_pr_unit = None
+
+    def forward(self) -> torch.Tensor:
+        self.forward_calls += 1
+        return self.value
+
+    def forward_from_l2_norm_pr_unit(
+        self,
+        l2_norm_pr_unit: torch.Tensor,
+    ) -> torch.Tensor:
+        self.forward_from_l2_norm_calls += 1
+        self.seen_l2_norm_pr_unit = l2_norm_pr_unit
         return self.value
 
 
@@ -96,6 +119,28 @@ def test_group_lasso_direct_formula_and_param_and_l2_gradients() -> None:
             ]
         ),
     )
+
+
+def test_group_lasso_reuses_l2_norm_for_param_pr_unit_fast_path() -> None:
+    param_pr_unit = ReusableParamCalculation(torch.tensor([3.0, 4.0]))
+    l2_norm_pr_unit = ParameterCalculation(torch.tensor([5.0, 7.0]))
+    regularizer = GroupLasso(
+        {
+            CalcType.PARAM_PR_UNIT: param_pr_unit,
+            CalcType.L2_NORM_PR_UNIT: l2_norm_pr_unit,
+        }
+    )
+
+    loss = regularizer()
+
+    torch.testing.assert_close(
+        loss.detach(),
+        torch.sqrt(torch.tensor(3.0)) * 5.0 + 2.0 * 7.0,
+    )
+    assert l2_norm_pr_unit.forward_calls == 1
+    assert param_pr_unit.forward_calls == 0
+    assert param_pr_unit.forward_from_l2_norm_calls == 1
+    assert param_pr_unit.seen_l2_norm_pr_unit is l2_norm_pr_unit.value
 
 
 def test_group_lasso_requires_explicit_calculations() -> None:

@@ -62,6 +62,7 @@ from torch_weighttracker.calculations.calcs.unit_delta_to_module_axis import (
     create_unit_delta_to_module_axis_calc,
 )
 from torch_weighttracker.calculations.calcs.units_to_group import (
+    UnitsToGroup,
     create_units_to_group_calc,
 )
 from torch_weighttracker.calculations.calcs.units_to_module_axis import (
@@ -84,6 +85,7 @@ __all__ = [
     "Block24SparsityCalc",
     "UnitPrGroup",
     "UnitActiveMaskCalc",
+    "UnitsToGroup",
     "UnstructuredSparsityPrModuleCalc",
     "create_active_macs_pr_module_calc",
     "create_active_units_calc",

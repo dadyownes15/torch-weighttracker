@@ -8,6 +8,9 @@ from torch_weighttracker.calculations import (
     PipelineCalc,
     ReductionCalc,
 )
+from torch_weighttracker.calculations.calcs.units_to_group import (
+    create_units_to_group_calc,
+)
 from torch_weighttracker.canonical_units import CanonicalUnitGroup, UnitKind
 from torch_weighttracker.extractors.extractor import TensorSpec, ValueTensorRef
 from torch_weighttracker.plans.mapping_plan import create_unit_to_group_acc
@@ -187,6 +190,23 @@ def test_pipeline_calculation_propagates_gradients_through_gather_index_add() ->
     calculation = PipelineCalc(_unit_to_group_plan(input_value))
 
     loss = calculation(input_value).square().sum()
+    loss.backward()
+
+    torch.testing.assert_close(input_value.grad, torch.tensor([6.0, 6.0, 14.0, 14.0]))
+
+
+def test_units_to_group_accumulates_fresh_outputs_and_gradients() -> None:
+    input_value = torch.tensor([1.0, 2.0, 3.0, 4.0], requires_grad=True)
+    calculation = create_units_to_group_calc(_unit_groups())
+
+    first = calculation(input_value)
+    second = calculation(input_value)
+
+    assert first.data_ptr() != second.data_ptr()
+    torch.testing.assert_close(first, torch.tensor([3.0, 7.0]))
+    torch.testing.assert_close(second, torch.tensor([3.0, 7.0]))
+
+    loss = first.square().sum()
     loss.backward()
 
     torch.testing.assert_close(input_value.grad, torch.tensor([6.0, 6.0, 14.0, 14.0]))

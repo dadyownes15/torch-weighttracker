@@ -37,6 +37,7 @@ from torch_weighttracker.calculations.calcs.group_unit_param_change import (
     create_group_unit_param_change_calc,
 )
 from torch_weighttracker.calculations.calcs.groups_to_units import (
+    GroupsToUnits,
     create_groups_to_units_calc,
 )
 from torch_weighttracker.calculations.calcs.l2_norm_pr_unit import (
@@ -83,6 +84,7 @@ __all__ = [
     "ModuleAxisCostIndicesCalc",
     "ParamPrUnit",
     "Block24SparsityCalc",
+    "GroupsToUnits",
     "UnitPrGroup",
     "UnitActiveMaskCalc",
     "UnitsToGroup",

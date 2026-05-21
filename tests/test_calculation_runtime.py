@@ -8,6 +8,9 @@ from torch_weighttracker.calculations import (
     PipelineCalc,
     ReductionCalc,
 )
+from torch_weighttracker.calculations.calcs.groups_to_units import (
+    create_groups_to_units_calc,
+)
 from torch_weighttracker.calculations.calcs.units_to_group import (
     create_units_to_group_calc,
 )
@@ -210,6 +213,30 @@ def test_units_to_group_accumulates_fresh_outputs_and_gradients() -> None:
     loss.backward()
 
     torch.testing.assert_close(input_value.grad, torch.tensor([6.0, 6.0, 14.0, 14.0]))
+
+
+def test_groups_to_units_expands_fresh_outputs_and_gradients() -> None:
+    input_value = torch.tensor([3.0, 7.0], requires_grad=True)
+    calculation = create_groups_to_units_calc(
+        _unit_groups(),
+        input_spec=TensorSpec(
+            shape=input_value.shape,
+            dtype=input_value.dtype,
+            device=input_value.device,
+        ),
+    )
+
+    first = calculation(input_value)
+    second = calculation(input_value)
+
+    assert first.data_ptr() != second.data_ptr()
+    torch.testing.assert_close(first, torch.tensor([3.0, 3.0, 7.0, 7.0]))
+    torch.testing.assert_close(second, torch.tensor([3.0, 3.0, 7.0, 7.0]))
+
+    loss = first.square().sum()
+    loss.backward()
+
+    torch.testing.assert_close(input_value.grad, torch.tensor([12.0, 28.0]))
 
 
 class GradModeTracker(BaseTracker):

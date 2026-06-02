@@ -132,9 +132,6 @@ class WeightTracker:
             )
         )
 
-        if self._uses_attention_view():
-            groups = [group for group in groups if self._is_attention_group(group)]
-
         filtered_groups = []
         for group in groups:
             filtered_group = self._without_ignored_members(group)
@@ -142,18 +139,6 @@ class WeightTracker:
                 filtered_groups.append(filtered_group)
 
         return filtered_groups
-
-    def _uses_attention_view(self) -> bool:
-        return bool(self.num_heads) and bool(self.prune_dim or self.prune_num_heads)
-
-    def _is_attention_group(self, group) -> bool:
-        for dep, _ in group:
-            if dep.target.module in self.num_heads and (
-                self.dependency_graph.is_out_channel_pruning_fn(dep.handler)
-            ):
-                return True
-
-        return False
 
     def _without_ignored_members(self, group):
         if len(self.ignored_layers) == 0:

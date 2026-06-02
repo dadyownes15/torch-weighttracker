@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Iterable, cast
+from collections.abc import Iterable
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -20,7 +21,11 @@ from torch_weighttracker.extractors.extractor import (
     ModuleParameterTupleRef,
     TensorSourceRef,
 )
-from torch_weighttracker.operations import QKVSemanticOperation, WeightOperationType
+from torch_weighttracker.operations import (
+    MultiheadAttentionSemanticOperation,
+    QKVSemanticOperation,
+    WeightOperationType,
+)
 from torch_weighttracker.operations.resolver import operation_for_member
 from torch_weighttracker.reductions.builder import (
     FullSelection,
@@ -47,18 +52,26 @@ class CanonicalMemberTensorExtractor(ElementTensorExtractor[CanonicalMember]):
 
         if element.source_layout == SourceLayout.FUSED_QKV:
             if isinstance(element.module, nn.MultiheadAttention):
-                return _bind_module_parameter(element.module, "in_proj_weight")
+                in_proj = _bind_module_parameter(element.module, "in_proj_weight")
+                out_proj = _bind_mha_out_proj_weight(element.module)
+                if in_proj is None:
+                    return None
+                if out_proj is None:
+                    return in_proj
+                return ModuleParameterTupleRef((in_proj, out_proj))
             return _bind_module_parameter(element.module, "weight")
 
         if element.source_layout == SourceLayout.SEPARATE_QKV:
-            refs = (
+            refs = [
                 _bind_module_parameter(element.module, "q_proj_weight"),
                 _bind_module_parameter(element.module, "k_proj_weight"),
                 _bind_module_parameter(element.module, "v_proj_weight"),
-            )
+            ]
+            if isinstance(element.module, nn.MultiheadAttention):
+                refs.append(_bind_mha_out_proj_weight(element.module))
             if any(ref is None for ref in refs):
                 return None
-            return ModuleParameterTupleRef(refs)  # type: ignore[arg-type]
+            return ModuleParameterTupleRef(tuple(refs))  # type: ignore[arg-type]
 
         raise ValueError(f"Unsupported source layout: {element.source_layout}")
 
@@ -94,6 +107,14 @@ class UnitWeightReductionMapper:
             num_heads = element.num_heads
         else:
             raise ValueError(f"Unsupported QKV unit axis: {element.unit_axis}")
+
+        if isinstance(element.module, nn.MultiheadAttention):
+            return MultiheadAttentionSemanticOperation(
+                operation_type=self.operation_type,
+                embed_dim=element.embed_dim,
+                num_heads=num_heads,
+                mode=mode,
+            )
 
         return QKVSemanticOperation(
             operation_type=self.operation_type,
@@ -196,6 +217,15 @@ def _bind_module_parameter(
     if not isinstance(value, torch.Tensor):
         return None
     return ModuleParameterRef(module, name)
+
+
+def _bind_mha_out_proj_weight(
+    module: nn.MultiheadAttention,
+) -> ModuleParameterRef | None:
+    out_proj = getattr(module, "out_proj", None)
+    if not isinstance(out_proj, nn.Module):
+        return None
+    return _bind_module_parameter(out_proj, "weight")
 
 
 def group_items(group):

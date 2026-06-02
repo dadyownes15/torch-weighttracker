@@ -41,11 +41,7 @@ def module_axis_sizes(module: nn.Module) -> tuple[float, float]:
         return float(module.in_features), float(module.out_features)
 
     if isinstance(module, nn.MultiheadAttention):
-        raise ValueError(
-            "ACTIVE_MACS_PR_MODULE does not support nn.MultiheadAttention parent "
-            "modules in V1. Use projection Linear modules or add explicit MHA "
-            "operation terms."
-        )
+        return float(module.embed_dim), float(module.embed_dim)
 
     feature_size = _feature_axis_size(module)
     if feature_size is not None:
@@ -59,6 +55,17 @@ def module_axis_sizes(module: nn.Module) -> tuple[float, float]:
 
 def module_axis_for_member(member: CanonicalMember) -> int:
     return 0 if member.unit_axis == UnitAxis.IN_CHANNEL else 1
+
+
+def module_axes_for_member(member: CanonicalMember) -> tuple[int, ...]:
+    if isinstance(member.module, nn.MultiheadAttention) and member.unit_axis in {
+        UnitAxis.QKV_CHANNEL,
+        UnitAxis.QKV_HEAD,
+        UnitAxis.QKV_HEAD_DIM,
+    }:
+        return (0, 1)
+
+    return (module_axis_for_member(member),)
 
 
 def _conv_axis_sizes(module: nn.Conv2d) -> tuple[float, float]:

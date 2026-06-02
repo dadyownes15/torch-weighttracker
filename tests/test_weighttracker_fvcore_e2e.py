@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import copy
+
 import fvcore.nn
 import torch
 import torch.nn as nn
@@ -132,6 +134,19 @@ def _axis_counts_by_module(tracker: WeightTracker) -> dict[str, torch.Tensor]:
     module_axis = calculations[CalcType.UNITS_TO_MODULE_AXIS](active).view(-1, 2)
     return {
         name: module_axis[index]
+        for index, (name, _) in enumerate(tracker._get_weighted_module_entries())
+    }
+
+
+def _active_axes_by_module(tracker: WeightTracker) -> dict[str, torch.Tensor]:
+    active = tracker.get_calculation(CalcType.UNIT_ACTIVE_MASK)()
+    baseline_axes = tracker.get_calculation(CalcType.BASELINE_MODULE_AXES)()
+    axis_delta = tracker.get_calculation(CalcType.UNIT_DELTA_TO_MODULE_AXIS)(
+        active
+    ).view_as(baseline_axes)
+    active_axes = (baseline_axes + axis_delta).view(-1, 2)
+    return {
+        name: active_axes[index]
         for index, (name, _) in enumerate(tracker._get_weighted_module_entries())
     }
 
@@ -420,9 +435,9 @@ def test_transformer_attention_head_prune_matches_pruned_fvcore_modules() -> Non
     _zero_group_unit(group, (0, 1, 2, 3))
     axis_counts = _axis_counts_by_module(tracker)
 
-    torch.testing.assert_close(axis_counts["attn"], torch.tensor([0.0, 3.0]))
-    torch.testing.assert_close(axis_counts["mlp_in"], torch.tensor([3.0, 0.0]))
-    torch.testing.assert_close(axis_counts["head"], torch.tensor([3.0, 0.0]))
+    torch.testing.assert_close(axis_counts["attn"], torch.tensor([3.0, 3.0]))
+    torch.testing.assert_close(axis_counts["mlp_in"], torch.tensor([3.0, 32.0]))
+    torch.testing.assert_close(axis_counts["head"], torch.tensor([3.0, 5.0]))
 
     _prune_group(group, (0, 1, 2, 3))
 
@@ -439,3 +454,246 @@ def test_transformer_attention_head_prune_matches_pruned_fvcore_modules() -> Non
     assert by_module["mlp_in"] == _linear_flops(model.mlp_in, leading_elements=8)
     assert by_module["mlp_out"] == _linear_flops(model.mlp_out, leading_elements=8)
     assert by_module["head"] == _linear_flops(model.head, leading_elements=1)
+
+
+def test_prune_num_heads_keeps_transformer_mlp_width_group_for_macs() -> None:
+    torch.manual_seed(0)
+    masked = TinyTransformerClassifier().eval()
+    physical = copy.deepcopy(masked).eval()
+    token_ids = torch.randint(0, 32, (1, 8))
+
+    masked_tracker = _attention_head_tracker(masked, token_ids)
+    masked_group = _group_containing(
+        masked_tracker,
+        "mlp_in",
+        prune_linear_out_channels,
+    )
+    _zero_group_unit(masked_group, (0, 7, 31))
+
+    physical_tracker = _attention_head_tracker(physical, token_ids)
+    physical_group = _group_containing(
+        physical_tracker,
+        "mlp_in",
+        prune_linear_out_channels,
+    )
+    _prune_group(physical_group, (0, 7, 31))
+
+    active_axes = _active_axes_by_module(masked_tracker)
+    module_names = tuple(
+        name for name, _ in masked_tracker._get_weighted_module_entries()
+    )
+    active_macs = masked_tracker.get_calculation(CalcType.ACTIVE_MACS_PR_MODULE)()
+    physical_macs = _mac_tensor_for_names(
+        _fvcore_by_module(physical, token_ids),
+        module_names,
+        like=active_macs,
+    )
+
+    torch.testing.assert_close(active_axes["mlp_in"], torch.tensor([16.0, 29.0]))
+    torch.testing.assert_close(active_axes["mlp_out"], torch.tensor([29.0, 16.0]))
+    torch.testing.assert_close(active_macs, physical_macs)
+
+
+def test_structured_bops_prune_num_heads_matches_mixed_transformer_pruning() -> None:
+    torch.manual_seed(0)
+    masked = TinyTransformerClassifier().eval()
+    masked.attn.activation_bitrate = 8
+    masked.attn.weight_bitrate = 4
+    masked.mlp_in.bitrate = 6
+    masked.mlp_out.activation_bitrate = 4
+    masked.mlp_out.weight_bitrate = 3
+    masked.head.bitrate = 5
+    dense = copy.deepcopy(masked).eval()
+    physical = copy.deepcopy(masked).eval()
+    token_ids = torch.randint(0, 32, (1, 8))
+
+    masked_tracker = _attention_head_tracker(masked, token_ids)
+    masked_attention_group = _group_containing(
+        masked_tracker,
+        "attn",
+        prune_multihead_attention_out_channels,
+    )
+    masked_mlp_group = _group_containing(
+        masked_tracker,
+        "mlp_in",
+        prune_linear_out_channels,
+    )
+    _zero_group_unit(masked_attention_group, (0, 1, 2, 3))
+    _zero_group_unit(masked_mlp_group, (0, 7, 31))
+
+    physical_tracker = _attention_head_tracker(physical, token_ids)
+    physical_attention_group = _group_containing(
+        physical_tracker,
+        "attn",
+        prune_multihead_attention_out_channels,
+    )
+    physical_mlp_group = _group_containing(
+        physical_tracker,
+        "mlp_in",
+        prune_linear_out_channels,
+    )
+    _prune_group(physical_attention_group, (0, 1, 2, 3))
+    _prune_group(physical_mlp_group, (0, 7, 31))
+
+    structured_bops = masked_tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_total_bops=True,
+        log_module_names=True,
+        log_layerwise_stats=True,
+        log_compression_rate=True,
+    )
+    metrics = structured_bops.track()
+    module_names = tuple(metrics["structured_bops_module_names"])
+    active_axes = _active_axes_by_module(masked_tracker)
+    active_macs = structured_bops.calc(CalcType.ACTIVE_MACS_PR_MODULE)()
+    baseline_macs = structured_bops.calc(CalcType.BASELINE_MACS_PR_MODULE)()
+    bitrates = structured_bops.calc(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
+    physical_macs = _mac_tensor_for_names(
+        _fvcore_by_module(physical, token_ids),
+        module_names,
+        like=active_macs,
+    )
+    dense_macs = _mac_tensor_for_names(
+        _fvcore_by_module(dense, token_ids),
+        module_names,
+        like=baseline_macs,
+    )
+    expected_active_bops = physical_macs * bitrates.prod(dim=1)
+    expected_baseline_bops = dense_macs * (32 * 32)
+
+    torch.testing.assert_close(active_axes["attn"], torch.tensor([12.0, 12.0]))
+    torch.testing.assert_close(active_axes["mlp_in"], torch.tensor([12.0, 29.0]))
+    torch.testing.assert_close(active_axes["mlp_out"], torch.tensor([29.0, 12.0]))
+    assert "attn.out_proj" not in module_names
+    torch.testing.assert_close(active_macs, physical_macs)
+    torch.testing.assert_close(baseline_macs, dense_macs)
+    torch.testing.assert_close(
+        torch.stack(tuple(metrics["structured_bops_pr_module"].values())),
+        expected_active_bops,
+    )
+    torch.testing.assert_close(metrics["structured_bops"], expected_active_bops.sum())
+    torch.testing.assert_close(
+        torch.stack(tuple(metrics["structured_bops_baseline_pr_module"].values())),
+        expected_baseline_bops,
+    )
+    torch.testing.assert_close(
+        metrics["structured_bops_baseline"],
+        expected_baseline_bops.sum(),
+    )
+
+
+def test_multihead_attention_direct_macs_allows_uncalled_internal_out_proj() -> None:
+    model = TinyTransformerClassifier().eval()
+    token_ids = torch.randint(0, 32, (1, 8))
+    tracker = _attention_head_tracker(model, token_ids)
+    module_names = tracker._calculation_context().weighted_module_names
+    out_proj_index = module_names.index("attn.out_proj")
+
+    baseline_macs = tracker.get_calculation(CalcType.BASELINE_MACS_PR_MODULE)()
+
+    assert "attn" in module_names
+    torch.testing.assert_close(baseline_macs[out_proj_index], torch.tensor(0.0))
+
+
+def test_structured_bops_attention_head_matches_pruned_fvcore_with_bitrates() -> None:
+    torch.manual_seed(0)
+    masked = TinyTransformerClassifier().eval()
+    masked.attn.activation_bitrate = 8
+    masked.attn.weight_bitrate = 4
+    masked.mlp_in.bitrate = 6
+    masked.mlp_out.activation_bitrate = 4
+    masked.mlp_out.weight_bitrate = 3
+    masked.head.bitrate = 5
+    dense = copy.deepcopy(masked).eval()
+    physical = copy.deepcopy(masked).eval()
+    token_ids = torch.randint(0, 32, (1, 8))
+
+    masked_tracker = _attention_head_tracker(masked, token_ids)
+    masked_group = _group_containing(
+        masked_tracker,
+        "attn",
+        prune_multihead_attention_out_channels,
+    )
+    _zero_group_unit(masked_group, (0, 1, 2, 3))
+
+    physical_tracker = _attention_head_tracker(physical, token_ids)
+    physical_group = _group_containing(
+        physical_tracker,
+        "attn",
+        prune_multihead_attention_out_channels,
+    )
+    _prune_group(physical_group, (0, 1, 2, 3))
+
+    structured_bops = masked_tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_total_bops=True,
+        log_module_names=True,
+        log_layerwise_stats=True,
+        log_compression_rate=True,
+    )
+    metrics = structured_bops.track()
+    module_names = tuple(metrics["structured_bops_module_names"])
+    active_macs = structured_bops.calc(CalcType.ACTIVE_MACS_PR_MODULE)()
+    baseline_macs = structured_bops.calc(CalcType.BASELINE_MACS_PR_MODULE)()
+    bitrates = structured_bops.calc(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
+    physical_macs = _mac_tensor_for_names(
+        _fvcore_by_module(physical, token_ids),
+        module_names,
+        like=active_macs,
+    )
+    dense_macs = _mac_tensor_for_names(
+        _fvcore_by_module(dense, token_ids),
+        module_names,
+        like=baseline_macs,
+    )
+    expected_active_bops = physical_macs * bitrates.prod(dim=1)
+    expected_baseline_bops = dense_macs * (32 * 32)
+
+    assert "attn" in module_names
+    assert "attn.out_proj" not in module_names
+    torch.testing.assert_close(active_macs, physical_macs)
+    torch.testing.assert_close(baseline_macs, dense_macs)
+    torch.testing.assert_close(
+        torch.stack(tuple(metrics["structured_bops_pr_module"].values())),
+        expected_active_bops,
+    )
+    torch.testing.assert_close(metrics["structured_bops"], expected_active_bops.sum())
+    torch.testing.assert_close(
+        torch.stack(tuple(metrics["structured_bops_baseline_pr_module"].values())),
+        expected_baseline_bops,
+    )
+    torch.testing.assert_close(
+        metrics["structured_bops_baseline"],
+        expected_baseline_bops.sum(),
+    )
+
+
+def _attention_head_tracker(
+    model: TinyTransformerClassifier,
+    token_ids: torch.Tensor,
+) -> WeightTracker:
+    return WeightTracker(
+        model,
+        example_inputs=token_ids,
+        root_module_types=[nn.MultiheadAttention, nn.Linear],
+        num_heads={model.attn: model.attn.num_heads},
+        prune_num_heads=True,
+    )
+
+
+def _mac_tensor_for_names(
+    by_module: dict[str, int],
+    names: tuple[str, ...],
+    *,
+    like: torch.Tensor,
+) -> torch.Tensor:
+    missing = [name for name in names if name not in by_module]
+    if missing:
+        raise AssertionError(
+            "fvcore did not report MACs for tracked modules: " + ", ".join(missing)
+        )
+    return torch.tensor(
+        [float(by_module[name]) for name in names],
+        dtype=like.dtype,
+        device=like.device,
+    )

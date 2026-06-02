@@ -22,7 +22,7 @@ from torch_weighttracker.canonical_units import (
 )
 from torch_weighttracker.extractors.extractor import TensorSpec
 from torch_weighttracker.plans.mapping_plan import create_unit_input_ref
-from torch_weighttracker.plans.module_axis_plan import module_axis_for_member
+from torch_weighttracker.plans.module_axis_plan import module_axes_for_member
 from torch_weighttracker.reductions.builder import (
     IndexSelection,
     PipelinePlan,
@@ -96,35 +96,35 @@ def _build_unit_delta_to_module_axis_plan(
         if module_index is None:
             continue
 
-        axis = module_axis_for_member(member)
-        source_indices: list[int] = []
-        for unit_index in member.unit_indices:
-            key = (module_index, axis, int(unit_index))
-            if key in seen:
+        for axis in module_axes_for_member(member):
+            source_indices: list[int] = []
+            for unit_index in member.unit_indices:
+                key = (module_index, axis, int(unit_index))
+                if key in seen:
+                    continue
+                seen.add(key)
+                source_indices.append(int(unit_index))
+
+            if not source_indices:
                 continue
-            seen.add(key)
-            source_indices.append(int(unit_index))
 
-        if not source_indices:
-            continue
-
-        op = ReductionOp(
-            input_ref,
-            ActiveUnitAxisDeltaReduction(
-                axis_multiplier_for_member(member, axis=axis),
-            ),
-        )
-        target = module_index * 2 + axis
-        builder.add(
-            ReductionRecord(
-                op=op,
-                mapping=ReductionMapping(
-                    source=IndexSelection(tuple(source_indices)),
-                    target=IndexSelection((target,) * len(source_indices)),
+            op = ReductionOp(
+                input_ref,
+                ActiveUnitAxisDeltaReduction(
+                    axis_multiplier_for_member(member, axis=axis),
                 ),
             )
-        )
-        record_count += 1
+            target = module_index * 2 + axis
+            builder.add(
+                ReductionRecord(
+                    op=op,
+                    mapping=ReductionMapping(
+                        source=IndexSelection(tuple(source_indices)),
+                        target=IndexSelection((target,) * len(source_indices)),
+                    ),
+                )
+            )
+            record_count += 1
 
     if record_count == 0:
         op = ReductionOp(input_ref, ActiveUnitAxisDeltaReduction(1.0))
@@ -144,7 +144,11 @@ def _build_unit_delta_to_module_axis_plan(
 def axis_multiplier_for_member(member: CanonicalMember, *, axis: int) -> float:
     multiplier = units_to_embed_multiplier_for_member(member)
 
-    if member.source_layout == SourceLayout.FUSED_QKV and axis == 1:
+    if (
+        member.source_layout == SourceLayout.FUSED_QKV
+        and not isinstance(member.module, nn.MultiheadAttention)
+        and axis == 1
+    ):
         return 3.0 * multiplier
 
     return multiplier

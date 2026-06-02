@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import torch
+import torch.nn as nn
 
 from torch_weighttracker.calculations.base import CalcType
 from torch_weighttracker.calculations.context import (
@@ -69,13 +70,17 @@ def _fvcore_macs_by_weighted_module(
         if hasattr(analysis, "uncalled_modules")
         else set()
     )
+    zero_macs_when_uncalled = _multihead_attention_out_proj_modules(ctx.model)
 
     values: list[float] = []
     missing: list[str] = []
     for module in ctx.weighted_modules:
         name = names_by_module.get(module)
-        if name is None or name not in by_module or name in uncalled:
+        if name is None or name not in by_module:
             missing.append("<unnamed>" if name is None else name)
+            continue
+        if name in uncalled and module not in zero_macs_when_uncalled:
+            missing.append(name)
             continue
         values.append(float(by_module[name]))
 
@@ -86,6 +91,15 @@ def _fvcore_macs_by_weighted_module(
         )
 
     return values
+
+
+def _multihead_attention_out_proj_modules(model: nn.Module) -> set[nn.Module]:
+    return {
+        attention.out_proj
+        for attention in model.modules()
+        if isinstance(attention, nn.MultiheadAttention)
+        and isinstance(getattr(attention, "out_proj", None), nn.Module)
+    }
 
 
 CALCULATION_SPEC = CalculationSpec(

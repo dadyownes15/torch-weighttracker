@@ -1,6 +1,7 @@
 from collections.abc import Iterable
 
 import torch
+import torch.nn as nn
 
 from torch_weighttracker.calculations import CalcType, CalculationContext
 from torch_weighttracker.consumer_ignore import (
@@ -46,15 +47,28 @@ class StructuredBOPs(BaseTracker):
         **kwargs,
     ) -> CalculationContext | None:
         filters = ConsumerFilter(include=include, ignore=ignore)
-        if not filters:
+        base_weighted_modules = owner._get_weighted_modules()
+        filtered_weighted_modules = (
+            filter_modules(base_weighted_modules, filters)
+            if filters
+            else base_weighted_modules
+        )
+        weighted_modules = _structured_bops_weighted_modules(
+            owner.model,
+            filtered_weighted_modules,
+        )
+
+        if not filters and weighted_modules == base_weighted_modules:
             return None
 
         return owner._calculation_context(
             canonical_groups=filter_canonical_members(
                 owner.canonical_groups,
                 filters,
-            ),
-            weighted_modules=filter_modules(owner._get_weighted_modules(), filters),
+            )
+            if filters
+            else owner.canonical_groups,
+            weighted_modules=weighted_modules,
         )
 
     @classmethod
@@ -151,3 +165,16 @@ def _named_tensor_values(
     values: torch.Tensor,
 ) -> dict[str, torch.Tensor]:
     return {name: value for name, value in zip(module_names, values, strict=True)}
+
+
+def _structured_bops_weighted_modules(
+    model: nn.Module,
+    modules: Iterable[nn.Module],
+) -> tuple[nn.Module, ...]:
+    internal_out_projections = {
+        attention.out_proj
+        for attention in model.modules()
+        if isinstance(attention, nn.MultiheadAttention)
+        and isinstance(getattr(attention, "out_proj", None), nn.Module)
+    }
+    return tuple(module for module in modules if module not in internal_out_projections)

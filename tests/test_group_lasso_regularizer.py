@@ -7,6 +7,7 @@ import pytest
 import torch
 import torch.nn as nn
 
+from tests.fixtures_models import TinyTransformerClassifier
 from tests.test_calculation_specs import _model_and_groups
 from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.canonical_units import canonicalize_groups
@@ -18,6 +19,7 @@ from torch_weighttracker.torch_pruning.pruner.function import (
     prune_conv_out_channels,
     prune_linear_in_channels,
     prune_linear_out_channels,
+    prune_multihead_attention_out_channels,
 )
 from torch_weighttracker.weight_tracker import WeightTracker
 
@@ -492,6 +494,98 @@ def test_group_lasso_qkv_projection_exact_values_and_gradients(
     )
 
 
+def test_group_lasso_multihead_attention_reaches_out_projection_weights() -> None:
+    attention = nn.MultiheadAttention(
+        embed_dim=4,
+        num_heads=2,
+        batch_first=True,
+        bias=False,
+    )
+    model = nn.Module()
+    model.attn = attention
+    groups = canonicalize_groups(
+        (
+            FakeGroup(
+                _member(
+                    attention,
+                    prune_multihead_attention_out_channels,
+                    (0, 1, 2, 3),
+                ),
+            ),
+        ),
+        num_heads={attention: attention.num_heads},
+        prune_num_heads=True,
+    )
+    tracker = WeightTracker(
+        model,
+        groups=groups,
+        num_heads={attention: attention.num_heads},
+        prune_num_heads=True,
+    )
+
+    loss = tracker.create_regularizer(RegularizerType.GROUP_LASSO)()
+    loss.backward()
+
+    assert attention.in_proj_weight.grad is not None
+    assert attention.out_proj.weight.grad is not None
+    assert attention.in_proj_weight.grad.abs().sum() > 0
+    assert attention.out_proj.weight.grad.abs().sum() > 0
+
+
+def test_group_lasso_terms_are_zero_for_fake_zeroed_transformer_structures() -> None:
+    torch.manual_seed(0)
+    model = TinyTransformerClassifier().eval()
+    token_ids = torch.randint(0, 32, (1, 8))
+    tracker = WeightTracker(
+        model,
+        example_inputs=token_ids,
+        root_module_types=[nn.MultiheadAttention, nn.Linear],
+        num_heads={model.attn: model.attn.num_heads},
+        prune_num_heads=True,
+    )
+
+    attention_group = _group_containing(
+        tracker,
+        "attn",
+        prune_multihead_attention_out_channels,
+    )
+    mlp_group = _group_containing(
+        tracker,
+        "mlp_in",
+        prune_linear_out_channels,
+    )
+    _zero_group_unit(attention_group, (0, 1, 2, 3))
+    _zero_group_unit(mlp_group, (0, 7, 31))
+
+    l2_norm_pr_unit = tracker.get_calculation(CalcType.L2_NORM_PR_UNIT)()
+    param_pr_unit = tracker.get_calculation(CalcType.PARAM_PR_UNIT)()
+    group_lasso_terms = param_pr_unit.sqrt() * l2_norm_pr_unit
+    loss = tracker.create_regularizer(RegularizerType.GROUP_LASSO)()
+    zeroed_unit_indices = torch.tensor(
+        [
+            attention_group.offset,
+            mlp_group.offset,
+            mlp_group.offset + 7,
+            mlp_group.offset + 31,
+        ]
+    )
+
+    torch.testing.assert_close(
+        l2_norm_pr_unit.index_select(0, zeroed_unit_indices),
+        torch.zeros(4),
+    )
+    torch.testing.assert_close(
+        param_pr_unit.index_select(0, zeroed_unit_indices),
+        torch.zeros(4),
+    )
+    torch.testing.assert_close(
+        group_lasso_terms.index_select(0, zeroed_unit_indices),
+        torch.zeros(4),
+    )
+    torch.testing.assert_close(loss.detach(), group_lasso_terms.sum().detach())
+    assert group_lasso_terms.sum() > 0
+
+
 def _assert_group_lasso_calculations(
     tracker: WeightTracker,
     *,
@@ -520,6 +614,90 @@ def _assert_group_lasso_calculations(
     torch.testing.assert_close(group_sizes, expected_group_sizes)
     torch.testing.assert_close(param_pr_unit, expected_param_pr_unit)
     torch.testing.assert_close(l2_norm_pr_unit, expected_l2_norm_pr_unit)
+
+
+def _group_containing(
+    tracker: WeightTracker,
+    module_name: str,
+    handler,
+):
+    names = {module: name for name, module in tracker.model.named_modules()}
+    for group in tracker.canonical_groups:
+        for member in group.members:
+            if names[member.module] == module_name and member.handler == handler:
+                return group
+    raise AssertionError(f"No canonical group contains {module_name}.")
+
+
+def _zero_group_unit(
+    group,
+    root_indices: tuple[int, ...],
+) -> None:
+    roots = set(root_indices)
+    for member in group.members:
+        raw_member = member.member
+        local_indices = [
+            int(local_index)
+            for local_index, root_index in zip(
+                raw_member.idxs,
+                raw_member.root_idxs,
+                strict=True,
+            )
+            if int(root_index) in roots
+        ]
+        if local_indices:
+            _zero_member_slices(member.module, member.handler, local_indices)
+
+
+def _zero_member_slices(
+    module: nn.Module,
+    handler,
+    indices: list[int],
+) -> None:
+    with torch.no_grad():
+        if isinstance(module, nn.Linear) and handler == prune_linear_out_channels:
+            module.weight[indices, :] = 0
+            if module.bias is not None:
+                module.bias[indices] = 0
+            return
+
+        if isinstance(module, nn.Linear) and handler == prune_linear_in_channels:
+            module.weight[:, indices] = 0
+            return
+
+        if isinstance(module, nn.LayerNorm):
+            if module.elementwise_affine:
+                module.weight[indices] = 0
+                if module.bias is not None:
+                    module.bias[indices] = 0
+            return
+
+        if (
+            isinstance(module, nn.MultiheadAttention)
+            and handler == prune_multihead_attention_out_channels
+        ):
+            _zero_mha_out_slices(module, indices)
+            return
+
+    raise AssertionError(f"Unhandled test zeroing rule for {handler.__name__}")
+
+
+def _zero_mha_out_slices(attention: nn.MultiheadAttention, indices: list[int]) -> None:
+    embed_dim = attention.embed_dim
+    repeated = list(indices)
+    repeated += [index + embed_dim for index in indices]
+    repeated += [index + 2 * embed_dim for index in indices]
+
+    if attention.in_proj_weight is not None:
+        attention.in_proj_weight[repeated, :] = 0
+        attention.in_proj_weight[:, indices] = 0
+    if attention.in_proj_bias is not None:
+        attention.in_proj_bias[repeated] = 0
+    if attention.out_proj is not None:
+        attention.out_proj.weight[indices, :] = 0
+        attention.out_proj.weight[:, indices] = 0
+        if attention.out_proj.bias is not None:
+            attention.out_proj.bias[indices] = 0
 
 
 def _zero_qkv_embed_indices(module: nn.Linear, embed_indices: tuple[int, ...]) -> None:

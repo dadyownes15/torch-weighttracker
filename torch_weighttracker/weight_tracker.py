@@ -329,11 +329,6 @@ class WeightTracker:
                 "nvidia_2_4_sparsity/nvidia_eligible_layers",
                 "nvidia_2_4_sparsity/total_layers", and
                 "nvidia_2_4_sparsity/tail_elements".
-            TrackerType.GROUP_PRUNING_SUMMARY / "group_pruning_summary":
-                Tracks flat W&B-friendly pruned unit and group-attributed
-                pruned parameter counts. Output includes
-                "group_pruning/pruned_units", "group_pruning/pruned_params",
-                and per-group scalar keys under "group_pruning/groups/".
 
         Args:
             tracker_type: The tracker type enum or string value to create, or
@@ -341,8 +336,7 @@ class WeightTracker:
                 create together. Single values return one tracker. Iterable
                 values return a list of trackers in the requested order.
                 Valid strings are "structured_bops", "l2_norm_distribution",
-                "unstructured_sparsity", "nvidia_2_4_sparsity", and
-                "group_pruning_summary".
+                "unstructured_sparsity", and "nvidia_2_4_sparsity".
             include: Optional module instances or module types to keep in this
                 tracker's calculation context. Module instances include their
                 descendants.
@@ -405,14 +399,6 @@ class WeightTracker:
             "nvidia_2_4_sparsity/tail_elements": Count of reduction-axis
                 elements not covered by complete 4-value blocks.
 
-        GroupPruningSummary output:
-            "group_pruning/pruned_units": Total pruned canonical units.
-            "group_pruning/pruned_params": Total group-attributed pruned
-                parameter footprint.
-            "group_pruning/groups/<group_name>/pruned_units": Per-group pruned
-                canonical unit count.
-            "group_pruning/groups/<group_name>/pruned_params": Per-group
-                group-attributed pruned parameter footprint.
         """
         is_collection = is_tracker_type_collection(tracker_type)
         tracker_types = normalize_tracker_types(tracker_type)

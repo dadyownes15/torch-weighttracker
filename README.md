@@ -114,9 +114,7 @@ print(raw_metrics["structured_bops_compression_rate_pr_module"])
 types/strings:
 
 ```python
-tracker.create_tracker(
-    [TrackerType.STRUCTURED_BOPS, "group_pruning_summary"]
-)
+tracker.create_tracker([TrackerType.STRUCTURED_BOPS, "unstructured_sparsity"])
 metrics = tracker.track()
 ```
 
@@ -254,31 +252,6 @@ The strict fraction counts complete 4-value blocks with exactly two zeros. The
 NVIDIA-eligible fraction counts blocks with at least two zeros, matching the
 TensorRT eligibility rule. Tail elements are reported separately and prevent a
 layer from counting as strict or eligible.
-
-## Group Pruning Summary
-
-Group pruning summary reports pruned canonical units and group-attributed
-pruned parameters as flat scalar keys that can be passed directly to loggers
-such as W&B:
-
-```python
-import torch
-
-from torch_weighttracker.trackers import TrackerType
-
-metrics = tracker.create_tracker(
-    TrackerType.GROUP_PRUNING_SUMMARY,
-    include=[model.layer3, model.layer4],
-    ignore=[torch.nn.BatchNorm2d],
-).track()
-
-print(metrics["group_pruning/pruned_units"])
-print(metrics["group_pruning/pruned_params"])
-```
-
-Per-group values are emitted under keys such as
-`group_pruning/groups/layer3.0.conv1:prune_out_channels/pruned_units` and
-`group_pruning/groups/layer3.0.conv1:prune_out_channels/pruned_params`.
 
 ## Architecture
 

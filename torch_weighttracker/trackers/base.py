@@ -14,7 +14,6 @@ class TrackerType(str, Enum):
     L2_NORM_DISTRIBUTION = "l2_norm_distribution"
     UNSTRUCTURED_SPARSITY = "unstructured_sparsity"
     NVIDIA_2_4_SPARSITY = "nvidia_2_4_sparsity"
-    GROUP_PRUNING_SUMMARY = "group_pruning_summary"
 
 
 TrackerTypeInput = TrackerType | str
@@ -152,12 +151,5 @@ def tracker_class_for_type(tracker_type: TrackerTypeInput):
         )
 
         return Nvidia24Sparsity
-
-    if tracker_type == TrackerType.GROUP_PRUNING_SUMMARY:
-        from torch_weighttracker.trackers.group_pruning_summary import (
-            GroupPruningSummary,
-        )
-
-        return GroupPruningSummary
 
     raise ValueError(f"Unknown tracker type: {tracker_type.value}")

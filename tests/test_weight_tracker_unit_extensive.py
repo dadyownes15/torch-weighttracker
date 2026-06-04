@@ -167,8 +167,8 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
 @pytest.mark.parametrize(
     "tracker_types",
     (
-        ["l2_norm_distribution", "group_pruning_summary"],
-        [TrackerType.L2_NORM_DISTRIBUTION, TrackerType.GROUP_PRUNING_SUMMARY],
+        ["l2_norm_distribution", "unstructured_sparsity"],
+        [TrackerType.L2_NORM_DISTRIBUTION, TrackerType.UNSTRUCTURED_SPARSITY],
     ),
 )
 def test_create_tracker_accepts_tracker_type_lists(tracker_types) -> None:
@@ -181,7 +181,7 @@ def test_create_tracker_accepts_tracker_type_lists(tracker_types) -> None:
     assert tracker.trackers == created_trackers
     assert len(created_trackers) == 2
     assert "l2_norm_distribution/fc1:prune_out_channels" in metrics
-    assert "group_pruning/pruned_units" in metrics
+    assert "unstructured_sparsity" in metrics
 
 
 def test_invalid_tracker_type_lists_available_tracker_values() -> None:
@@ -221,82 +221,6 @@ def test_create_regularizer_wires_group_lasso_and_keeps_gradients() -> None:
     assert model.fc1.weight.grad is not None
     assert model.fc2.weight.grad is not None
     assert tracker.regularizers == [regularizer]
-
-
-def test_group_pruning_summary_reports_flat_unit_and_param_counts() -> None:
-    model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
-
-    metrics = tracker.create_tracker(TrackerType.GROUP_PRUNING_SUMMARY).track()
-
-    assert set(metrics) == {
-        "group_pruning/pruned_units",
-        "group_pruning/pruned_params",
-        "group_pruning/groups/fc1:prune_out_channels/pruned_units",
-        "group_pruning/groups/fc1:prune_out_channels/pruned_params",
-        "group_pruning/groups/fc2:prune_out_channels/pruned_units",
-        "group_pruning/groups/fc2:prune_out_channels/pruned_params",
-    }
-    assert all(not isinstance(value, dict) for value in metrics.values())
-    torch.testing.assert_close(
-        metrics["group_pruning/pruned_units"],
-        torch.tensor(1.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/pruned_params"],
-        torch.tensor(4.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/groups/fc1:prune_out_channels/pruned_units"],
-        torch.tensor(1.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/groups/fc1:prune_out_channels/pruned_params"],
-        torch.tensor(3.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/groups/fc2:prune_out_channels/pruned_units"],
-        torch.tensor(0.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/groups/fc2:prune_out_channels/pruned_params"],
-        torch.tensor(1.0),
-    )
-
-
-def test_group_pruning_summary_filters_canonical_members() -> None:
-    model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
-
-    metrics = tracker.create_tracker(
-        TrackerType.GROUP_PRUNING_SUMMARY,
-        ignore=[model.fc2],
-    ).track()
-
-    torch.testing.assert_close(
-        metrics["group_pruning/pruned_units"],
-        torch.tensor(2.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/pruned_params"],
-        torch.tensor(2.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/groups/fc1:prune_out_channels/pruned_units"],
-        torch.tensor(1.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/groups/fc1:prune_out_channels/pruned_params"],
-        torch.tensor(2.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/groups/fc2:prune_out_channels/pruned_units"],
-        torch.tensor(1.0),
-    )
-    torch.testing.assert_close(
-        metrics["group_pruning/groups/fc2:prune_out_channels/pruned_params"],
-        torch.tensor(0.0),
-    )
 
 
 def test_group_lasso_ignore_is_invariant_to_ignored_module_weights() -> None:

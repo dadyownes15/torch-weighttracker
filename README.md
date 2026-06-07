@@ -39,6 +39,8 @@ for inputs, targets in dataloader:
     optimizer.step()
 
     metrics = tracker.track()
+
+tracker.prune_zero_units()
 ```
 
 ## Installation

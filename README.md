@@ -224,8 +224,8 @@ For each weighted module $m$, WeightTracker multiplies the active structured MAC
 count by that module's activation and weight bit widths [1]:
 
 $$
-\operatorname{StructuredBOPs}_m =
-\operatorname{ActiveMACs}_m
+\mathit{StructuredBOPs}_m =
+\mathit{ActiveMACs}_m
 \cdot
 b^{\mathrm{act}}_m
 \cdot
@@ -236,8 +236,8 @@ The active MAC count scales the dense module MAC count by the active fraction of
 each structural cost axis:
 
 $$
-\operatorname{ActiveMACs}_m =
-\operatorname{BaselineMACs}_m
+\mathit{ActiveMACs}_m =
+\mathit{BaselineMACs}_m
 \cdot
 \prod_{a \in A_m}
 \frac{n^{\mathrm{active}}_{m,a}}{n^{\mathrm{baseline}}_{m,a}}
@@ -247,8 +247,8 @@ Compression is reported against a dense 32-bit activation and 32-bit weight
 baseline:
 
 $$
-\operatorname{BaselineBOPs}_m =
-\operatorname{BaselineMACs}_m
+\mathit{BaselineBOPs}_m =
+\mathit{BaselineMACs}_m
 \cdot
 32
 \cdot
@@ -256,19 +256,19 @@ $$
 $$
 
 $$
-\operatorname{CompressionRate} =
+\mathit{CompressionRate} =
 1 -
-\frac{\sum_m \operatorname{StructuredBOPs}_m}
-{\sum_m \operatorname{BaselineBOPs}_m}
+\frac{\sum_m \mathit{StructuredBOPs}_m}
+{\sum_m \mathit{BaselineBOPs}_m}
 $$
 
 Where:
 
-- $\operatorname{StructuredBOPs}_m$: active bit operations for weighted module
+- $\mathit{StructuredBOPs}_m$: active bit operations for weighted module
   $m$.
-- $\operatorname{ActiveMACs}_m$: active MAC count after structured units are
+- $\mathit{ActiveMACs}_m$: active MAC count after structured units are
   masked or pruned.
-- $\operatorname{BaselineMACs}_m$: dense MAC count for module $m$ before
+- $\mathit{BaselineMACs}_m$: dense MAC count for module $m$ before
   structured pruning.
 - $A_m$: structural cost axes for module $m$, such as input and output channel
   axes.
@@ -383,7 +383,8 @@ Per-group values are emitted under keys such as
 The main API is `WeightTracker`. Internally it is split into a few layers:
 
 1. Dependency discovery: `WeightTracker` builds dependency groups from the model
-   and `example_inputs`.
+   and `example_inputs` using Torch-Pruning's dependency graph machinery [2],
+   whose work we gratefully build on.
 2. Canonical units: `canonical_units.py` normalizes raw dependency groups into
    `CanonicalUnitGroup` objects. These give channels, features, attention heads,
    and head dimensions a shared unit index.
@@ -442,3 +443,5 @@ MIT
 ## References
 
 [1] Wang et al., *Differentiable Joint Pruning and Quantization for Hardware Efficiency*, 2020.
+
+[2] Fang et al., [Torch-Pruning](https://github.com/VainF/Torch-Pruning).

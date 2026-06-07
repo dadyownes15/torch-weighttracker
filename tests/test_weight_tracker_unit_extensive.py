@@ -40,8 +40,7 @@ def _assert_tensor_dict_close(actual, expected: dict[str, torch.Tensor]) -> None
 
 
 def test_package_exports_weight_tracker() -> None:
-    from torch_weighttracker import FakePruneUnitResult
-    from torch_weighttracker import PruneUnitResult
+    from torch_weighttracker import FakePruneUnitResult, PruneUnitResult
     from torch_weighttracker.weight_tracker import (
         FakePruneUnitResult as DirectFakePruneUnitResult,
     )
@@ -844,6 +843,16 @@ class TinyBiasedLinearChain(nn.Module):
         return self.fc2(self.fc1(x))
 
 
+class TinyConvBnNet(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(3, 4, kernel_size=1, bias=False)
+        self.bn = nn.BatchNorm2d(4)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.bn(self.conv(x))
+
+
 def _dependency_built_biased_linear_tracker() -> WeightTracker:
     model = TinyBiasedLinearChain()
     with torch.no_grad():
@@ -928,23 +937,31 @@ def test_fake_prune_unit_zeroes_hidden_output_row_and_input_column() -> None:
     torch.testing.assert_close(model.fc2.bias, torch.tensor([13.0]))
 
 
-def test_fake_prune_unit_invalidates_consumers_and_zero_view_recomputes() -> None:
+def test_fake_prune_unit_keeps_consumers_and_zero_view_recomputes() -> None:
     tracker = _dependency_built_biased_linear_tracker()
     group_id = _hidden_linear_group_id(tracker)
-    tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION)
-    tracker.create_regularizer(RegularizerType.GROUP_LASSO)
-    tracker.ensure_calculations((CalcType.L2_NORM_PR_UNIT,))
+    l2_tracker = tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION)
+    regularizer = tracker.create_regularizer(RegularizerType.GROUP_LASSO)
+    l2_norm_calc = tracker.ensure_calculations((CalcType.L2_NORM_PR_UNIT,))[
+        CalcType.L2_NORM_PR_UNIT
+    ]
     tracker._get_weighted_modules()
+    calculations_before = dict(tracker.calculations)
+    weighted_module_entries = tracker._weighted_module_entries
+    weighted_modules = tracker._weighted_modules
+    weighted_module_index = tracker._weighted_module_index
 
     result = tracker.fake_prune_unit(group_id, 2)
 
     assert result.zeroed_members == 2
-    assert tracker.trackers == []
-    assert tracker.regularizers == []
-    assert CalcType.L2_NORM_PR_UNIT not in tracker.calculations
-    assert tracker._weighted_module_entries is None
-    assert tracker._weighted_modules is None
-    assert tracker._weighted_module_index is None
+    assert tracker.trackers == [l2_tracker]
+    assert tracker.regularizers == [regularizer]
+    assert tracker.calculations == calculations_before
+    assert tracker._weighted_module_entries is weighted_module_entries
+    assert tracker._weighted_modules is weighted_modules
+    assert tracker._weighted_module_index is weighted_module_index
+    canonical_id = tracker.canonical_groups[group_id].offset + 2
+    assert l2_norm_calc()[canonical_id] == 0
 
     view = tracker.view_zero_units()
     assert view.total_zero_units == 1
@@ -1035,3 +1052,71 @@ def test_prune_zero_units_real_prune_invalidates_and_rebuilds() -> None:
     assert tracker.trackers == []
     assert tracker.regularizers == []
     assert tracker.calculations == {}
+
+
+def test_view_zero_structures_ignore_module_type_filters_detection_only() -> None:
+    model = TinyConvBnNet()
+    with torch.no_grad():
+        model.conv.weight[1].zero_()
+        model.bn.weight.fill_(1.0)
+
+    tracker = WeightTracker(
+        model,
+        example_inputs=torch.randn(1, 3, 4, 4),
+        root_module_types=[nn.Conv2d],
+    )
+
+    unfiltered = tracker.view_zero_structures()
+    filtered = tracker.view_zero_structures(ignore=[nn.BatchNorm2d])
+
+    assert unfiltered.total_zero_units == 0
+    assert filtered.total_zero_units == 1
+    assert filtered.groups[0].zero_units[0].unit_id == 1
+
+
+def test_prune_zero_structures_ignore_still_prunes_coupled_modules() -> None:
+    model = TinyConvBnNet()
+    with torch.no_grad():
+        model.conv.weight[1].zero_()
+        model.bn.weight.fill_(1.0)
+
+    tracker = WeightTracker(
+        model,
+        example_inputs=torch.randn(1, 3, 4, 4),
+        root_module_types=[nn.Conv2d],
+    )
+
+    result = tracker.prune_zero_structures(ignore=[nn.BatchNorm2d])
+
+    assert result.pruned_units == 1
+    assert result.view.total_zero_units == 1
+    assert model.conv.out_channels == 3
+    assert model.bn.num_features == 3
+
+
+def test_view_structures_ignore_module_type_hides_members() -> None:
+    model = TinyConvBnNet()
+    tracker = WeightTracker(
+        model,
+        example_inputs=torch.randn(1, 3, 4, 4),
+        root_module_types=[nn.Conv2d],
+    )
+
+    text = tracker.view_structures(ignore=[nn.BatchNorm2d])
+
+    assert "conv Conv2d" in text
+    assert "bn BatchNorm2d" not in text
+
+
+def test_zero_structure_ignore_all_members_returns_empty_view_and_noop_prune() -> None:
+    tracker = _dependency_built_linear_tracker()
+    model = tracker.model
+
+    view = tracker.view_zero_structures(ignore=[nn.Linear])
+    result = tracker.prune_zero_structures(ignore=[nn.Linear])
+
+    assert view.total_zero_units == 0
+    assert result.pruned_units == 0
+    assert result.view.total_zero_units == 0
+    assert model.fc1.weight.shape == (3, 2)
+    assert model.fc2.weight.shape == (1, 3)

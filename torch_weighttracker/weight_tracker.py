@@ -17,7 +17,11 @@ from torch_weighttracker.canonical_units import (
     UnitKind,
     canonicalize_groups,
 )
-from torch_weighttracker.consumer_ignore import FilterItem
+from torch_weighttracker.consumer_ignore import (
+    ConsumerFilter,
+    FilterItem,
+    filter_canonical_members,
+)
 from torch_weighttracker.extractors.codeq_bitrate_extractor import (
     ModuleBitrateExtractor,
 )
@@ -230,12 +234,36 @@ class WeightTracker:
         #    self._invalidate_calculations()
         return result
 
-    def view_zero_units(self) -> ZeroUnitView:
-        active_mask = self.get_calculation(CalcType.UNIT_ACTIVE_MASK)()
+    def view_zero_units(
+        self,
+        *,
+        ignore: Iterable[FilterItem] = (),
+    ) -> ZeroUnitView:
+        filters = ConsumerFilter(ignore=ignore)
+        filtered_groups = self._zero_detection_groups(filters=filters)
+        visible_groups = tuple(
+            (group, filtered_group)
+            for group, filtered_group in zip(
+                self.canonical_groups,
+                filtered_groups,
+                strict=True,
+            )
+            if len(filtered_group.members) > 0
+        )
+        if len(visible_groups) == 0:
+            return ZeroUnitView(groups=(), total_zero_units=0)
+
+        if filters:
+            active_mask = self.ensure_calculations(
+                (CalcType.UNIT_ACTIVE_MASK,),
+                context=self._calculation_context(canonical_groups=filtered_groups),
+            )[CalcType.UNIT_ACTIVE_MASK]()
+        else:
+            active_mask = self.get_calculation(CalcType.UNIT_ACTIVE_MASK)()
         zero_groups: list[ZeroUnitGroup] = []
         total_zero_units = 0
 
-        for group_index, group in enumerate(self.canonical_groups):
+        for group, _ in visible_groups:
             zero_units: list[ZeroUnit] = []
 
             for unit_id in range(group.length):
@@ -245,11 +273,11 @@ class WeightTracker:
 
                 zero_units.append(
                     ZeroUnit(
-                        group_id=group_index,
+                        group_id=group.group_id,
                         unit_id=unit_id,
                         canonical_id=canonical_id,
                         pruning_idxs=self._pruning_indices_for_unit(
-                            group_index,
+                            group.group_id,
                             unit_id,
                         ),
                     )
@@ -261,7 +289,7 @@ class WeightTracker:
             total_zero_units += len(zero_units)
             zero_groups.append(
                 ZeroUnitGroup(
-                    group_id=group_index,
+                    group_id=group.group_id,
                     offset=group.offset,
                     length=group.length,
                     zero_units=tuple(zero_units),
@@ -273,8 +301,28 @@ class WeightTracker:
             total_zero_units=total_zero_units,
         )
 
-    def prune_zero_units(self, *, dry_run: bool = False) -> PruneZeroUnitsResult:
-        view = self.view_zero_units()
+    def prune_zero_units(
+        self,
+        *,
+        dry_run: bool = False,
+        ignore: Iterable[FilterItem] = (),
+    ) -> PruneZeroUnitsResult:
+        return self.prune_zero_structures(dry_run=dry_run, ignore=ignore)
+
+    def view_zero_structures(
+        self,
+        *,
+        ignore: Iterable[FilterItem] = (),
+    ) -> ZeroUnitView:
+        return self.view_zero_units(ignore=ignore)
+
+    def prune_zero_structures(
+        self,
+        *,
+        dry_run: bool = False,
+        ignore: Iterable[FilterItem] = (),
+    ) -> PruneZeroUnitsResult:
+        view = self.view_zero_units(ignore=ignore)
         if dry_run or view.total_zero_units == 0:
             return PruneZeroUnitsResult(
                 view=view,
@@ -317,6 +365,16 @@ class WeightTracker:
             pruned_units=view.total_zero_units,
             dry_run=False,
         )
+
+    def _zero_detection_groups(
+        self,
+        *,
+        filters: ConsumerFilter,
+    ) -> tuple[CanonicalUnitGroup, ...]:
+        if not filters:
+            return tuple(self.canonical_groups)
+
+        return filter_canonical_members(self.canonical_groups, filters)
 
     def _pruning_indices_for_unit(
         self,
@@ -509,15 +567,25 @@ class WeightTracker:
 
         return calculation
 
-    def view_structures(self):
+    def view_structures(
+        self,
+        *,
+        ignore: Iterable[FilterItem] = (),
+    ):
+        canonical_groups = self._zero_detection_groups(
+            filters=ConsumerFilter(ignore=ignore),
+        )
+        visible_groups = tuple(
+            group for group in canonical_groups if len(group.members) > 0
+        )
         module_names = _module_name_map(self.model)
-        total_units = sum(group.length for group in self.canonical_groups)
+        total_units = sum(group.length for group in visible_groups)
         lines = [
             "CanonicalGroups",
-            f"groups={len(self.canonical_groups)} total_units={total_units}",
+            f"groups={len(visible_groups)} total_units={total_units}",
         ]
 
-        for group in self.canonical_groups:
+        for group in visible_groups:
             start = group.offset
             stop = group.offset + group.length
             lines.extend(

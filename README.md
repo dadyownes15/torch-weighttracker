@@ -88,14 +88,24 @@ Current use cases:
 
 ## Current Pruning Notes
 
-`WeightTracker` can now inspect zeroed canonical units with `view_zero_units()`
-and physically remove them with `prune_zero_units()`. You can also remove one
-canonical unit directly with `prune_unit(group_id, unit_id)`.
+`WeightTracker` can inspect zeroed canonical units with `view_zero_units()` /
+`view_zero_structures()` and physically remove them with `prune_zero_units()` /
+`prune_zero_structures()`. You can also remove one canonical unit directly with
+`prune_unit(group_id, unit_id)`.
+
+Zero detection can ignore module instances or module types, matching tracker
+filter semantics. The ignore filter only decides whether a structure is zero; if
+that structure is pruned, the coupled Torch-Pruning group is still applied:
+
+```python
+zero_view = tracker.view_zero_structures(ignore=[torch.nn.BatchNorm2d])
+tracker.prune_zero_structures(ignore=[torch.nn.BatchNorm2d])
+```
 
 Physical pruning changes module shapes and rebuilds the dependency state. Any
 registered trackers or regularizers are cleared after `prune_unit()` or
-`prune_zero_units()`, so recreate them before collecting metrics or losses from
-the pruned model:
+`prune_zero_units()` / `prune_zero_structures()`, so recreate them before
+collecting metrics or losses from the pruned model:
 
 ```python
 metrics_before = tracker.create_tracker(

@@ -18,6 +18,4 @@ tests/ignored/
 docs/
 DEPLOYMENT.dev.md
 scripts/*
-!scripts/
-!scripts/publish_new_version.sh
 AGENTS.md

@@ -1,22 +1,44 @@
 # torch-weighttracker
 
-Tools for tracking structured weight sparsity, regularization signals, and
-bit-operation estimates in PyTorch models.
+Track, regularize, and prune structured units in PyTorch models.
 
-The package builds a structural view of a model, compiles tensorized reduction
-plans over that structure, and reuses those plans for training-time metrics and
-regularizers.
+`torch-weighttracker` gives you a model-level view of sparsity: channels,
+features, attention heads, head dimensions, and fused QKV slices are grouped into
+canonical units, so metrics, pruning, and regularizers operate on the structure
+you would actually compress.
 
 ```python
 import torch
-from torch import nn
+import timm
 
 from torch_weighttracker import WeightTracker
+from torch_weighttracker.integrations.timm import infer_vit_num_heads
 
-model = nn.Sequential(nn.Linear(4, 8), nn.ReLU(), nn.Linear(8, 2))
-tracker = WeightTracker(model, example_inputs=torch.randn(1, 4))
+model = timm.create_model("vit_base_patch16_224", pretrained=False)
+optimizer = torch.optim.AdamW(model.parameters(), lr=1e-4)
+example_inputs = torch.randn(1, 3, 224, 224)
 
-print(tracker.view_structures())
+tracker = WeightTracker(
+    model,
+    example_inputs=example_inputs,
+    num_heads=infer_vit_num_heads(model),
+    prune_num_heads=True,
+)
+
+tracker.create_tracker("structured_bops", log_total_bops=True)
+group_lasso = tracker.create_regularizer("group_lasso")
+
+for inputs, targets in dataloader:
+    optimizer.zero_grad()
+
+    outputs = model(inputs)
+    task_loss = criterion(outputs, targets)
+    loss = task_loss + 1e-4 * group_lasso()
+
+    loss.backward()
+    optimizer.step()
+
+    metrics = tracker.track()
 ```
 
 ## Installation

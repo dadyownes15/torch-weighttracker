@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import Iterable, cast
+from collections.abc import Iterable
+from typing import cast
 
 import torch
 import torch.nn as nn
@@ -168,8 +169,10 @@ def source_indices_for_member(
     element: CanonicalMember,
     op: ReductionOp,
 ) -> tuple[int, ...]:
-    if element.source_indices is not None:
-        local_indices = tuple(int(index) for index in element.source_indices)
+    if element.calculation_source_indices is not None:
+        local_indices = tuple(
+            int(index) for index in element.calculation_source_indices
+        )
     else:
         local_indices = member_local_indices(element.member)
 

@@ -3,7 +3,11 @@ import torch
 import torch.nn as nn
 import torch.nn.utils.parametrize as parametrize
 
-from tests.test_calculation_specs import TinyLinearChain, _model_and_groups
+from tests.test_calculation_specs import (
+    TinyLinearChain,
+    _model_and_groups,
+    _tracker_from_groups,
+)
 from torch_weighttracker import WeightTracker
 from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.consumer_ignore import (
@@ -36,16 +40,31 @@ def _assert_tensor_dict_close(actual, expected: dict[str, torch.Tensor]) -> None
 
 
 def test_package_exports_weight_tracker() -> None:
-    from torch_weighttracker.weight_tracker import WeightTracker as DirectTracker
+    from torch_weighttracker import FakePruneUnitResult
+    from torch_weighttracker import PruneUnitResult
+    from torch_weighttracker.weight_tracker import (
+        FakePruneUnitResult as DirectFakePruneUnitResult,
+    )
+    from torch_weighttracker.weight_tracker import (
+        PruneUnitResult as DirectPruneUnitResult,
+    )
+    from torch_weighttracker.weight_tracker import (
+        WeightTracker as DirectTracker,
+    )
 
     assert WeightTracker is DirectTracker
+    assert FakePruneUnitResult is DirectFakePruneUnitResult
+    assert PruneUnitResult is DirectPruneUnitResult
 
 
-def test_dependency_build_requires_example_inputs_and_root_types_together() -> None:
+def test_weight_tracker_without_example_inputs_has_no_dependency_groups() -> None:
     model = TinyLinearChain()
 
-    with pytest.raises(ValueError, match="requires both example_inputs"):
-        WeightTracker(model, root_module_types=[nn.Linear])
+    tracker = WeightTracker(model, root_module_types=[nn.Linear])
+
+    assert tracker.groups == []
+    assert tracker.canonical_groups == ()
+    assert tracker.dependency_graph is None
 
 
 def test_weight_tracker_builds_groups_from_example_inputs() -> None:
@@ -75,7 +94,7 @@ def test_weight_tracker_rejects_example_inputs_on_different_device(
     model = TinyLinearChain()
 
     with pytest.raises(ValueError, match="same device as the model"):
-        WeightTracker(model, example_inputs=example_inputs, groups=[])
+        WeightTracker(model, example_inputs=example_inputs)
 
 
 def test_view_structures_returns_canonical_group_printout() -> None:
@@ -113,7 +132,7 @@ def test_weight_tracker_removes_ignored_layer_members_from_groups() -> None:
 
 def test_calculation_device_and_dtype_are_applied_to_pipeline_outputs() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups, device="cpu", dtype=torch.float64)
+    tracker = _tracker_from_groups(model, groups, device="cpu", dtype=torch.float64)
 
     units_to_group = tracker.get_calculation(CalcType.UNITS_TO_GROUP)
     baseline_sizes = tracker.get_calculation(CalcType.INIT_UNIT_PR_GROUP_COUNT)
@@ -131,7 +150,7 @@ def test_calculation_device_and_dtype_are_applied_to_pipeline_outputs() -> None:
 
 def test_cached_constant_calculations_keep_baseline_after_weight_changes() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     baseline_sizes = tracker.get_calculation(CalcType.INIT_UNIT_PR_GROUP_COUNT)
     active_units = tracker.get_calculation(CalcType.ACTIVE_UNITS)
@@ -149,7 +168,7 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     structured_bops = tracker.create_tracker(TrackerType.STRUCTURED_BOPS)
     metrics = structured_bops.track()
@@ -173,7 +192,7 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
 )
 def test_create_tracker_accepts_tracker_type_lists(tracker_types) -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     created_trackers = tracker.create_tracker(tracker_types)
     metrics = tracker.track()
@@ -186,7 +205,7 @@ def test_create_tracker_accepts_tracker_type_lists(tracker_types) -> None:
 
 def test_invalid_tracker_type_lists_available_tracker_values() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     with pytest.raises(ValueError) as exc_info:
         tracker.create_tracker("l2_norm")
@@ -211,7 +230,7 @@ def test_tracker_class_for_type_lists_available_tracker_values() -> None:
 
 def test_create_regularizer_wires_group_lasso_and_keeps_gradients() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     regularizer = tracker.create_regularizer(RegularizerType.GROUP_LASSO)
     loss = regularizer()
@@ -225,7 +244,7 @@ def test_create_regularizer_wires_group_lasso_and_keeps_gradients() -> None:
 
 def test_group_pruning_summary_reports_flat_unit_and_param_counts() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     metrics = tracker.create_tracker(TrackerType.GROUP_PRUNING_SUMMARY).track()
 
@@ -266,7 +285,7 @@ def test_group_pruning_summary_reports_flat_unit_and_param_counts() -> None:
 
 def test_group_pruning_summary_filters_canonical_members() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     metrics = tracker.create_tracker(
         TrackerType.GROUP_PRUNING_SUMMARY,
@@ -301,7 +320,7 @@ def test_group_pruning_summary_filters_canonical_members() -> None:
 
 def test_group_lasso_ignore_is_invariant_to_ignored_module_weights() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
     regularizer = tracker.create_regularizer(
         RegularizerType.GROUP_LASSO,
         ignore=[model.fc2],
@@ -322,7 +341,7 @@ def test_group_lasso_ignore_is_invariant_to_ignored_module_weights() -> None:
 
 def test_group_lasso_ignore_all_members_raises() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     with pytest.raises(ValueError, match="removed all canonical members"):
         tracker.create_regularizer(
@@ -333,7 +352,7 @@ def test_group_lasso_ignore_all_members_raises() -> None:
 
 def test_structured_bops_ignore_all_weighted_modules_raises() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     with pytest.raises(ValueError, match="removed all canonical members"):
         tracker.create_tracker(
@@ -347,7 +366,7 @@ def test_structured_bops_ignore_filters_weighted_modules() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     full = tracker.create_tracker(TrackerType.STRUCTURED_BOPS)
     filtered = tracker.create_tracker(
@@ -364,7 +383,7 @@ def test_structured_bops_include_filters_weighted_modules_and_names() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     metrics = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
@@ -391,7 +410,7 @@ def test_structured_bops_include_parent_matches_default_values() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     full_metrics = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
@@ -445,7 +464,7 @@ def test_structured_bops_include_parent_matches_default_values() -> None:
 
 def test_structured_bops_include_and_ignore_same_module_raises() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     with pytest.raises(
         ValueError,
@@ -463,7 +482,7 @@ def test_structured_bops_include_parent_ignore_child_keeps_fc1() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     metrics = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
@@ -596,7 +615,7 @@ def test_structured_bops_metric_module_names_follow_context() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     full_metrics = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
@@ -623,7 +642,7 @@ def test_structured_bops_default_compression_follows_context() -> None:
     model.fc2.bitrate = 4
     with torch.no_grad():
         model.fc2.weight.zero_()
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     full_metrics = tracker.create_tracker(TrackerType.STRUCTURED_BOPS).track()
     filtered_metrics = tracker.create_tracker(
@@ -652,7 +671,7 @@ def test_structured_bops_layerwise_stats_are_opt_in() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     total_only = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
@@ -686,7 +705,7 @@ def test_structured_bops_total_bops_logging_is_opt_in() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     metrics = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
@@ -716,7 +735,7 @@ def test_structured_bops_total_bops_logging_is_opt_in() -> None:
 
 def test_group_lasso_ignore_uses_context_key() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
     tracker.ensure_calculations((CalcType.L2_NORM_PR_UNIT,))
     global_l2 = tracker.calculations[CalcType.L2_NORM_PR_UNIT]
 
@@ -730,7 +749,7 @@ def test_group_lasso_ignore_uses_context_key() -> None:
 
 def test_filtering_keeps_group_index_space_stable() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     filtered_groups = filter_canonical_members(
         tracker.canonical_groups,
@@ -752,7 +771,7 @@ def test_filtering_keeps_group_index_space_stable() -> None:
 
 def test_consumer_ignore_does_not_mutate_global_calculations() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     tracker.ensure_calculations((CalcType.BITRATE_PR_MODULE,))
     global_calc = tracker.calculations[CalcType.BITRATE_PR_MODULE]
@@ -767,7 +786,7 @@ def test_consumer_ignore_does_not_mutate_global_calculations() -> None:
 
 def test_same_ignore_reuses_context_keyed_calculation() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     first = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
@@ -785,10 +804,234 @@ def test_same_ignore_reuses_context_keyed_calculation() -> None:
 
 def test_consumer_kwargs_are_not_silently_dropped() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     with pytest.raises(TypeError):
         tracker.create_tracker(
             TrackerType.STRUCTURED_BOPS,
             unsupported_option=True,
         )
+
+
+def _dependency_built_linear_tracker() -> WeightTracker:
+    model = TinyLinearChain()
+    with torch.no_grad():
+        model.fc1.weight.copy_(
+            torch.tensor(
+                [
+                    [1.0, 0.0],
+                    [0.0, 0.0],
+                    [2.0, 3.0],
+                ]
+            )
+        )
+        model.fc2.weight.copy_(torch.tensor([[4.0, 0.0, 6.0]]))
+
+    return WeightTracker(
+        model,
+        example_inputs=torch.randn(1, 2),
+        root_module_types=[nn.Linear],
+    )
+
+
+class TinyBiasedLinearChain(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.fc1 = nn.Linear(2, 3)
+        self.fc2 = nn.Linear(3, 1)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.fc2(self.fc1(x))
+
+
+def _dependency_built_biased_linear_tracker() -> WeightTracker:
+    model = TinyBiasedLinearChain()
+    with torch.no_grad():
+        model.fc1.weight.copy_(
+            torch.tensor(
+                [
+                    [1.0, 2.0],
+                    [3.0, 4.0],
+                    [5.0, 6.0],
+                ]
+            )
+        )
+        model.fc1.bias.copy_(torch.tensor([7.0, 8.0, 9.0]))
+        model.fc2.weight.copy_(torch.tensor([[10.0, 11.0, 12.0]]))
+        model.fc2.bias.copy_(torch.tensor([13.0]))
+
+    return WeightTracker(
+        model,
+        example_inputs=torch.randn(1, 2),
+        root_module_types=[nn.Linear],
+    )
+
+
+def _hidden_linear_group_id(tracker: WeightTracker) -> int:
+    for group_id, group in enumerate(tracker.canonical_groups):
+        modules = {member.module for member in group.members}
+        if len(group.members) == 2 and group.length == 3:
+            return group_id
+    raise AssertionError(f"hidden linear group not found: {modules}")
+
+
+def _output_linear_group_id(tracker: WeightTracker) -> int:
+    for group_id, group in enumerate(tracker.canonical_groups):
+        modules = {member.module for member in group.members}
+        if len(group.members) == 1 and group.length == 1:
+            return group_id
+    raise AssertionError(f"output linear group not found: {modules}")
+
+
+def test_fake_prune_unit_zeroes_output_member_bias_when_requested() -> None:
+    tracker = _dependency_built_biased_linear_tracker()
+    model = tracker.model
+    group_id = _output_linear_group_id(tracker)
+
+    result = tracker.fake_prune_unit(group_id, 0, prune_bias=True)
+
+    assert result.group_id == group_id
+    assert result.unit_id == 0
+    assert result.zeroed_members == 1
+    assert result.prune_bias is True
+    assert result.zeroed_parameters == ("fc2.weight", "fc2.bias")
+    torch.testing.assert_close(model.fc2.weight, torch.zeros_like(model.fc2.weight))
+    torch.testing.assert_close(model.fc2.bias, torch.zeros_like(model.fc2.bias))
+    assert model.fc2.weight.shape == (1, 3)
+
+
+def test_fake_prune_unit_can_leave_output_bias_unchanged() -> None:
+    tracker = _dependency_built_biased_linear_tracker()
+    model = tracker.model
+    group_id = _output_linear_group_id(tracker)
+
+    result = tracker.fake_prune_unit(group_id, 0, prune_bias=False)
+
+    assert result.zeroed_parameters == ("fc2.weight",)
+    assert result.prune_bias is False
+    torch.testing.assert_close(model.fc2.weight, torch.zeros_like(model.fc2.weight))
+    torch.testing.assert_close(model.fc2.bias, torch.tensor([13.0]))
+
+
+def test_fake_prune_unit_zeroes_hidden_output_row_and_input_column() -> None:
+    tracker = _dependency_built_biased_linear_tracker()
+    model = tracker.model
+    group_id = _hidden_linear_group_id(tracker)
+
+    result = tracker.fake_prune_unit(group_id, 1, prune_bias=True)
+
+    assert result.zeroed_members == 2
+    assert result.zeroed_parameters == ("fc1.weight", "fc1.bias", "fc2.weight")
+    torch.testing.assert_close(model.fc1.weight[1], torch.tensor([0.0, 0.0]))
+    torch.testing.assert_close(model.fc1.bias, torch.tensor([7.0, 0.0, 9.0]))
+    torch.testing.assert_close(model.fc2.weight[:, 1], torch.tensor([0.0]))
+    torch.testing.assert_close(model.fc2.bias, torch.tensor([13.0]))
+
+
+def test_fake_prune_unit_invalidates_consumers_and_zero_view_recomputes() -> None:
+    tracker = _dependency_built_biased_linear_tracker()
+    group_id = _hidden_linear_group_id(tracker)
+    tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION)
+    tracker.create_regularizer(RegularizerType.GROUP_LASSO)
+    tracker.ensure_calculations((CalcType.L2_NORM_PR_UNIT,))
+    tracker._get_weighted_modules()
+
+    result = tracker.fake_prune_unit(group_id, 2)
+
+    assert result.zeroed_members == 2
+    assert tracker.trackers == []
+    assert tracker.regularizers == []
+    assert CalcType.L2_NORM_PR_UNIT not in tracker.calculations
+    assert tracker._weighted_module_entries is None
+    assert tracker._weighted_modules is None
+    assert tracker._weighted_module_index is None
+
+    view = tracker.view_zero_units()
+    assert view.total_zero_units == 1
+    assert view.groups[0].group_id == group_id
+    assert view.groups[0].zero_units[0].unit_id == 2
+
+
+def test_fake_prune_unit_invalid_unit_does_not_mutate_or_invalidate() -> None:
+    tracker = _dependency_built_biased_linear_tracker()
+    model = tracker.model
+    group_id = _hidden_linear_group_id(tracker)
+    before_fc1 = model.fc1.weight.detach().clone()
+    before_fc2 = model.fc2.weight.detach().clone()
+    tracker.ensure_calculations((CalcType.L2_NORM_PR_UNIT,))
+    calculations_before = dict(tracker.calculations)
+
+    with pytest.raises(IndexError):
+        tracker.fake_prune_unit(group_id, 99)
+
+    torch.testing.assert_close(model.fc1.weight, before_fc1)
+    torch.testing.assert_close(model.fc2.weight, before_fc2)
+    assert tracker.calculations == calculations_before
+
+
+def test_prune_unit_uses_get_prune_unit_mapping_and_refreshes_state() -> None:
+    tracker = _dependency_built_linear_tracker()
+    model = tracker.model
+    group_id = _hidden_linear_group_id(tracker)
+    _, expected_idxs = tracker.get_prune_unit(group_id, 1)
+
+    tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION)
+    tracker.create_regularizer(RegularizerType.GROUP_LASSO)
+    tracker.ensure_calculations((CalcType.L2_NORM_PR_UNIT,))
+    assert tracker.trackers
+    assert tracker.regularizers
+    assert tracker.calculations
+
+    result = tracker.prune_unit(group_id, 1)
+
+    assert result.group_id == group_id
+    assert result.unit_id == 1
+    assert result.pruning_idxs == expected_idxs
+    assert model.fc1.weight.shape == (2, 2)
+    assert model.fc2.weight.shape == (1, 2)
+    assert tracker.trackers == []
+    assert tracker.regularizers == []
+    assert tracker.calculations == {}
+    assert tuple(group.length for group in tracker.canonical_groups) == (1, 2)
+    assert model(torch.randn(1, 2)).shape == (1, 1)
+
+
+def test_prune_zero_units_dry_run_keeps_consumers_and_model_state() -> None:
+    tracker = _dependency_built_linear_tracker()
+    model = tracker.model
+    tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION)
+    tracker.create_regularizer(RegularizerType.GROUP_LASSO)
+    tracker.ensure_calculations((CalcType.L2_NORM_PR_UNIT,))
+    calculations_before = dict(tracker.calculations)
+
+    result = tracker.prune_zero_units(dry_run=True)
+
+    assert result.dry_run is True
+    assert result.pruned_units == 0
+    assert result.view.total_zero_units == 1
+    assert model.fc1.weight.shape == (3, 2)
+    assert model.fc2.weight.shape == (1, 3)
+    assert tracker.trackers
+    assert tracker.regularizers
+    assert calculations_before.keys() <= tracker.calculations.keys()
+
+
+def test_prune_zero_units_real_prune_invalidates_and_rebuilds() -> None:
+    tracker = _dependency_built_linear_tracker()
+    model = tracker.model
+    tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION)
+    tracker.create_regularizer(RegularizerType.GROUP_LASSO)
+    old_group_lengths = tuple(group.length for group in tracker.canonical_groups)
+
+    result = tracker.prune_zero_units()
+
+    assert result.dry_run is False
+    assert result.pruned_units == 1
+    assert result.view.total_zero_units == 1
+    assert old_group_lengths == (1, 3)
+    assert tuple(group.length for group in tracker.canonical_groups) == (1, 2)
+    assert model.fc1.weight.shape == (2, 2)
+    assert model.fc2.weight.shape == (1, 2)
+    assert tracker.trackers == []
+    assert tracker.regularizers == []
+    assert tracker.calculations == {}

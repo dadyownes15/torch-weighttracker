@@ -1,4 +1,5 @@
-from collections.abc import Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
 
 import torch
 import torch.nn as nn
@@ -13,17 +14,24 @@ from torch_weighttracker.calculations.base import Calculation
 from torch_weighttracker.canonical_units import (
     CanonicalMember,
     CanonicalUnitGroup,
+    UnitKind,
     canonicalize_groups,
 )
 from torch_weighttracker.consumer_ignore import FilterItem
 from torch_weighttracker.extractors.codeq_bitrate_extractor import (
     ModuleBitrateExtractor,
 )
+from torch_weighttracker.pruning.fake import (
+    FakePruneUnitResult,
+    fake_prune_canonical_unit,
+    member_indices_for_unit,
+)
 from torch_weighttracker.reductions.builder import IndexSelection, SegmentSelection
 from torch_weighttracker.regularizers import (
     RegularizerType,
     regularizer_class_for_type,
 )
+from torch_weighttracker.torch_pruning import ops
 from torch_weighttracker.torch_pruning.dependency import DependencyGraph
 from torch_weighttracker.torch_pruning.dependency.group import Group
 from torch_weighttracker.trackers import (
@@ -36,13 +44,48 @@ from torch_weighttracker.trackers.base import (
 )
 
 
+@dataclass(frozen=True)
+class ZeroUnit:
+    group_id: int
+    unit_id: int
+    canonical_id: int
+    pruning_idxs: tuple[int, ...]
+
+
+@dataclass(frozen=True)
+class ZeroUnitGroup:
+    group_id: int
+    offset: int
+    length: int
+    zero_units: tuple[ZeroUnit, ...]
+
+
+@dataclass(frozen=True)
+class ZeroUnitView:
+    groups: tuple[ZeroUnitGroup, ...]
+    total_zero_units: int
+
+
+@dataclass(frozen=True)
+class PruneZeroUnitsResult:
+    view: ZeroUnitView
+    pruned_units: int
+    dry_run: bool
+
+
+@dataclass(frozen=True)
+class PruneUnitResult:
+    group_id: int
+    unit_id: int
+    pruning_idxs: tuple[int, ...]
+
+
 class WeightTracker:
     def __init__(
         self,
         model: nn.Module,
         example_inputs=None,
-        groups=None,
-        root_module_types=None,
+        root_module_types=(ops.TORCH_CONV, ops.TORCH_LINEAR),
         forward_fn=None,
         output_transform=None,
         unwrapped_parameters=None,
@@ -54,6 +97,7 @@ class WeightTracker:
         prune_num_heads=False,
         device=None,
         dtype=None,
+        post_prune_hooks: Iterable[Callable[["WeightTracker"], None]] = (),
     ) -> None:
         self.model = model
         self.device = device
@@ -62,43 +106,29 @@ class WeightTracker:
         self.prune_dim = prune_dim
         self.prune_num_heads = prune_num_heads
         self.root_module_types = root_module_types
+        self.forward_fn = forward_fn
+        self.output_transform = output_transform
+        self.unwrapped_parameters = _normalize_unwrapped_parameters(
+            unwrapped_parameters
+        )
+        self.customized_pruners = customized_pruners
+        self.post_prune_hooks = tuple(post_prune_hooks)
+        self.dependency_graph = None
+
         self.ignored_layers = _expanded_ignored_layers(ignored_layers)
         self.ignored_params = [] if ignored_params is None else list(ignored_params)
-        self.dependency_graph = None
+        self.ignored_params.extend(
+            item for item in self.ignored_layers if isinstance(item, nn.Parameter)
+        )
+        self.ignored_layers = [
+            item for item in self.ignored_layers if isinstance(item, nn.Module)
+        ]
 
         _validate_example_inputs_device(model, example_inputs)
         self.example_inputs = example_inputs
 
-        if groups is None:
-            if example_inputs is None:
-                if root_module_types is not None:
-                    raise ValueError(
-                        "Dependency graph construction requires both example_inputs "
-                        "and root_module_types."
-                    )
-                self.groups = []
-            else:
-                self.groups = self._build_groups(
-                    example_inputs=example_inputs,
-                    root_module_types=root_module_types,
-                    forward_fn=forward_fn,
-                    output_transform=output_transform,
-                    unwrapped_parameters=unwrapped_parameters,
-                    customized_pruners=customized_pruners,
-                )
-        else:
-            self.groups = list(groups)
-
-        if all(isinstance(group, CanonicalUnitGroup) for group in self.groups):
-            self.canonical_groups = tuple(self.groups)
-        else:
-            self.canonical_groups = canonicalize_groups(
-                self.groups,
-                num_heads=self.num_heads,
-                prune_dim=self.prune_dim,
-                prune_num_heads=self.prune_num_heads,
-            )
-
+        self.groups = []
+        self.canonical_groups = ()
         self.calculations = {}
         self._weighted_module_entries = None
         self._weighted_modules = None
@@ -106,42 +136,44 @@ class WeightTracker:
         self.regularizers = []
         self.trackers = []
 
-    def _build_groups(
-        self,
-        example_inputs,
-        root_module_types=None,
-        forward_fn=None,
-        output_transform=None,
-        unwrapped_parameters=None,
-        customized_pruners=None,
-    ):
+        self._build_dependency_state()
+
+    def _build_dependency_state(self) -> None:
+        if self.example_inputs is None:
+            self.dependency_graph = None
+            self.groups = []
+            self.canonical_groups = ()
+            return
+
         self.dependency_graph = DependencyGraph().build_dependency(
             model=self.model,
-            example_inputs=example_inputs,
-            forward_fn=forward_fn,
-            output_transform=output_transform,
-            unwrapped_parameters=_normalize_unwrapped_parameters(unwrapped_parameters),
-            customized_pruners=customized_pruners,
+            example_inputs=self.example_inputs,
+            forward_fn=self.forward_fn,
+            output_transform=self.output_transform,
+            unwrapped_parameters=self.unwrapped_parameters,
+            customized_pruners=self.customized_pruners,
             ignored_params=self.ignored_params,
         )
 
         groups = list(
             self.dependency_graph.get_all_groups(
                 ignored_layers=self.ignored_layers,
-                # root_module_types=root_module_types,
+                root_module_types=self.root_module_types,
             )
         )
 
-        if self._uses_attention_view():
-            groups = [group for group in groups if self._is_attention_group(group)]
-
-        filtered_groups = []
+        self.groups = []
         for group in groups:
             filtered_group = self._without_ignored_members(group)
             if filtered_group is not None:
-                filtered_groups.append(filtered_group)
+                self.groups.append(filtered_group)
 
-        return filtered_groups
+        self.canonical_groups = canonicalize_groups(
+            self.groups,
+            num_heads=self.num_heads,
+            prune_dim=self.prune_dim,
+            prune_num_heads=self.prune_num_heads,
+        )
 
     def _uses_attention_view(self) -> bool:
         return bool(self.num_heads) and bool(self.prune_dim or self.prune_num_heads)
@@ -154,6 +186,239 @@ class WeightTracker:
                 return True
 
         return False
+
+    def get_prune_unit(self, group_id: int, unit_id: int):
+        group = self.canonical_groups[group_id]
+        if unit_id < 0 or unit_id >= group.length:
+            raise IndexError(
+                f"unit_id {unit_id} is outside canonical group {group_id} "
+                f"length {group.length}."
+            )
+
+        pruning_idxs = self._pruning_indices_for_unit(group_id, unit_id)
+
+        pruning_group = self._get_pruning_group_for_indices(group_id, pruning_idxs)
+        return pruning_group, pruning_idxs
+
+    def prune_unit(self, group_id: int, unit_id: int) -> PruneUnitResult:
+        pruning_group, pruning_idxs = self.get_prune_unit(group_id, unit_id)
+        self._prepare_group_for_physical_prune(group_id, (unit_id,))
+        pruning_group.prune()
+        result = PruneUnitResult(
+            group_id=group_id,
+            unit_id=unit_id,
+            pruning_idxs=tuple(int(index) for index in pruning_idxs),
+        )
+        self._refresh_after_physical_prune((result,))
+        return result
+
+    def fake_prune_unit(
+        self,
+        group_id: int,
+        unit_id: int,
+        *,
+        prune_bias: bool = True,
+    ) -> FakePruneUnitResult:
+        result = fake_prune_canonical_unit(
+            self.model,
+            self.canonical_groups,
+            group_id,
+            unit_id,
+            prune_bias=prune_bias,
+        )
+        # if result.zeroed_members > 0:
+        #    self._invalidate_calculations()
+        return result
+
+    def view_zero_units(self) -> ZeroUnitView:
+        active_mask = self.get_calculation(CalcType.UNIT_ACTIVE_MASK)()
+        zero_groups: list[ZeroUnitGroup] = []
+        total_zero_units = 0
+
+        for group_index, group in enumerate(self.canonical_groups):
+            zero_units: list[ZeroUnit] = []
+
+            for unit_id in range(group.length):
+                canonical_id = group.offset + unit_id
+                if bool(active_mask[canonical_id].item()):
+                    continue
+
+                zero_units.append(
+                    ZeroUnit(
+                        group_id=group_index,
+                        unit_id=unit_id,
+                        canonical_id=canonical_id,
+                        pruning_idxs=self._pruning_indices_for_unit(
+                            group_index,
+                            unit_id,
+                        ),
+                    )
+                )
+
+            if len(zero_units) == 0:
+                continue
+
+            total_zero_units += len(zero_units)
+            zero_groups.append(
+                ZeroUnitGroup(
+                    group_id=group_index,
+                    offset=group.offset,
+                    length=group.length,
+                    zero_units=tuple(zero_units),
+                )
+            )
+
+        return ZeroUnitView(
+            groups=tuple(zero_groups),
+            total_zero_units=total_zero_units,
+        )
+
+    def prune_zero_units(self, *, dry_run: bool = False) -> PruneZeroUnitsResult:
+        view = self.view_zero_units()
+        if dry_run or view.total_zero_units == 0:
+            return PruneZeroUnitsResult(
+                view=view,
+                pruned_units=0,
+                dry_run=dry_run,
+            )
+
+        events: list[PruneUnitResult] = []
+        for zero_group in view.groups:
+            pruning_idxs = tuple(
+                sorted(
+                    {
+                        idx
+                        for zero_unit in zero_group.zero_units
+                        for idx in zero_unit.pruning_idxs
+                    }
+                )
+            )
+            pruning_group = self._get_pruning_group_for_indices(
+                zero_group.group_id,
+                pruning_idxs,
+            )
+            self._prepare_group_for_physical_prune(
+                zero_group.group_id,
+                tuple(zero_unit.unit_id for zero_unit in zero_group.zero_units),
+            )
+            pruning_group.prune()
+            events.extend(
+                PruneUnitResult(
+                    group_id=zero_unit.group_id,
+                    unit_id=zero_unit.unit_id,
+                    pruning_idxs=zero_unit.pruning_idxs,
+                )
+                for zero_unit in zero_group.zero_units
+            )
+
+        self._refresh_after_physical_prune(events)
+        return PruneZeroUnitsResult(
+            view=view,
+            pruned_units=view.total_zero_units,
+            dry_run=False,
+        )
+
+    def _pruning_indices_for_unit(
+        self,
+        group_id: int,
+        unit_id: int,
+    ) -> tuple[int, ...]:
+        group = self.canonical_groups[group_id]
+        if len(group.members) == 0:
+            raise ValueError(f"Canonical group {group_id} has no members.")
+        if unit_id < 0 or unit_id >= group.length:
+            raise IndexError(
+                f"unit_id {unit_id} is outside canonical group {group_id} "
+                f"length {group.length}."
+            )
+
+        return member_indices_for_unit(group.members[0], unit_id)
+
+    def _get_pruning_group_for_indices(
+        self,
+        group_id: int,
+        pruning_idxs: tuple[int, ...],
+    ):
+        if self.dependency_graph is None:
+            raise ValueError("Physical pruning requires a dependency graph.")
+
+        group = self.canonical_groups[group_id]
+        if len(group.members) == 0:
+            raise ValueError(f"Canonical group {group_id} has no members.")
+
+        member = group.members[0]
+        return self.dependency_graph.get_pruning_group(
+            module=member.module,
+            pruning_fn=member.handler,
+            idxs=pruning_idxs,
+        )
+
+    def _prepare_group_for_physical_prune(
+        self,
+        group_id: int,
+        unit_ids: Iterable[int],
+    ) -> None:
+        group = self.canonical_groups[group_id]
+        if group.unit_kind != UnitKind.HEAD:
+            return
+
+        pruned_head_count = len({int(unit_id) for unit_id in unit_ids})
+        if pruned_head_count == 0:
+            return
+
+        for member in group.members:
+            if not isinstance(member.module, nn.MultiheadAttention):
+                continue
+            if member.num_heads is None:
+                continue
+            current_num_heads = int(self.num_heads.get(member.module, member.num_heads))
+            post_prune_num_heads = max(1, current_num_heads - pruned_head_count)
+            member.module.num_heads = post_prune_num_heads
+
+    def _invalidate_calculations(self) -> None:
+        self.calculations.clear()
+        self._weighted_module_entries = None
+        self._weighted_modules = None
+        self._weighted_module_index = None
+        self.trackers.clear()
+        self.regularizers.clear()
+
+    def _refresh_after_physical_prune(
+        self,
+        events: Iterable[PruneUnitResult],
+    ) -> None:
+        events = tuple(events)
+        self._invalidate_calculations()
+        self._update_logical_num_heads_after_prune(events)
+        for hook in self.post_prune_hooks:
+            hook(self)
+        self._build_dependency_state()
+
+    def _update_logical_num_heads_after_prune(
+        self,
+        events: Iterable[PruneUnitResult],
+    ) -> None:
+        pruned_units_by_group: dict[int, set[int]] = {}
+        for event in events:
+            pruned_units_by_group.setdefault(event.group_id, set()).add(event.unit_id)
+
+        for group_id, unit_ids in pruned_units_by_group.items():
+            group = self.canonical_groups[group_id]
+            if group.unit_kind != UnitKind.HEAD:
+                continue
+
+            for member in group.members:
+                if member.num_heads is None:
+                    continue
+                if member.pruning_indices_by_unit is None:
+                    continue
+                current_num_heads = int(
+                    self.num_heads.get(member.module, member.num_heads)
+                )
+                self.num_heads[member.module] = max(
+                    1,
+                    current_num_heads - len(unit_ids),
+                )
 
     def _without_ignored_members(self, group):
         if len(self.ignored_layers) == 0:
@@ -279,8 +544,15 @@ class WeightTracker:
                     f"layout={_enum_value(member.source_layout)}",
                     f"dest={_format_selection(member.destination)}",
                 ]
-                if member.source_indices is not None:
-                    details.append(f"source={_format_indices(member.source_indices)}")
+                if member.calculation_source_indices is not None:
+                    details.append(
+                        "calculation_source="
+                        f"{_format_indices(member.calculation_source_indices)}"
+                    )
+                if member.pruning_indices_by_unit is not None:
+                    details.append(
+                        f"pruning_layout={_enum_value(member.pruning_index_layout)}"
+                    )
                 attention_details = _format_attention_details(member)
                 if attention_details:
                     details.append(attention_details)
@@ -482,7 +754,7 @@ class WeightTracker:
 
     def create_regularizer(
         self,
-        regularizer_type: RegularizerType,
+        regularizer_type: RegularizerType | str,
         *,
         include: Iterable[FilterItem] = (),
         ignore: Iterable[FilterItem] = (),
@@ -753,6 +1025,10 @@ def _format_indices(indices: tuple[int, ...], *, max_items: int = 8) -> str:
 
 def _format_attention_details(member) -> str:
     details = []
+    if member.projection_out_features is not None:
+        details.append(f"projection_out_features={member.projection_out_features}")
+    if member.projection_in_features is not None:
+        details.append(f"projection_in_features={member.projection_in_features}")
     if member.embed_dim is not None:
         details.append(f"embed_dim={member.embed_dim}")
     if member.num_heads is not None:
@@ -780,10 +1056,20 @@ def _canonical_member_key(member: CanonicalMember) -> tuple:
         _selection_key(member.destination),
         (
             None
-            if member.source_indices is None
-            else tuple(int(index) for index in member.source_indices)
+            if member.calculation_source_indices is None
+            else tuple(int(index) for index in member.calculation_source_indices)
         ),
-        member.embed_dim,
+        (
+            None
+            if member.pruning_indices_by_unit is None
+            else tuple(
+                tuple(int(index) for index in indices)
+                for indices in member.pruning_indices_by_unit
+            )
+        ),
+        member.projection_out_features,
+        member.projection_in_features,
+        member.pruning_index_layout,
         member.num_heads,
         member.head_dim,
     )

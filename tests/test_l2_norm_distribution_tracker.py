@@ -5,8 +5,8 @@ from tests.test_calculation_specs import (
     TinyQKVProjectionBlock,
     _member,
     _model_and_groups,
+    _tracker_from_groups,
 )
-from torch_weighttracker import WeightTracker
 from torch_weighttracker.canonical_units import canonicalize_groups
 from torch_weighttracker.torch_pruning.pruner.function import (
     prune_linear_in_channels,
@@ -17,7 +17,7 @@ from torch_weighttracker.trackers import TrackerType
 
 def test_l2_norm_distribution_reports_exact_l2_values_pr_group() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     l2_tracker = tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION)
     metrics = l2_tracker.track()
@@ -39,7 +39,7 @@ def test_l2_norm_distribution_reports_exact_l2_values_pr_group() -> None:
 
 def test_l2_norm_distribution_ignore_is_invariant_to_ignored_weights() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
     l2_tracker = tracker.create_tracker(
         TrackerType.L2_NORM_DISTRIBUTION,
         ignore=[model.fc2],
@@ -81,7 +81,7 @@ def test_l2_norm_distribution_ignore_is_invariant_to_ignored_weights() -> None:
 
 def test_l2_norm_distribution_include_is_invariant_to_excluded_weights() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
     l2_tracker = tracker.create_tracker(
         TrackerType.L2_NORM_DISTRIBUTION,
         include=[model.fc1],
@@ -133,9 +133,9 @@ def test_l2_norm_distribution_names_attention_head_dim_groups() -> None:
         num_heads={model.qkv: 2},
         prune_dim=True,
     )
-    tracker = WeightTracker(
+    tracker = _tracker_from_groups(
         model,
-        groups=groups,
+        groups,
         num_heads={model.qkv: 2},
         prune_dim=True,
     )

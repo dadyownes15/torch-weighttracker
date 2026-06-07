@@ -1,8 +1,8 @@
 from __future__ import annotations
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 from enum import Enum
-from typing import Iterable
 
 import torch.nn as nn
 
@@ -27,6 +27,11 @@ class SourceLayout(str, Enum):
     SEPARATE_QKV = "separate_qkv"
 
 
+class PruningIndexLayout(str, Enum):
+    EMBED_SPACE = "embed_space"
+    FUSED_QKV_ROW_SPACE = "fused_qkv_row_space"
+
+
 class UnitAxis(str, Enum):
     OUT_CHANNEL = "out_channel"
     IN_CHANNEL = "in_channel"
@@ -46,16 +51,22 @@ class UnitKind(str, Enum):
 class AttentionUnitConfig:
     source_module: nn.Module
     source_layout: SourceLayout
-    embed_dim: int
+    projection_out_features: int
+    projection_in_features: int
     num_heads: int | None
     unit_axis: UnitAxis
     output_length: int
+    pruning_index_layout: PruningIndexLayout
 
     @property
     def head_dim(self) -> int | None:
         if self.num_heads is None:
             return None
-        return self.embed_dim // self.num_heads
+        return self.projection_out_features // self.num_heads
+
+    @property
+    def embed_dim(self) -> int:
+        return self.projection_out_features
 
 
 @dataclass(frozen=True)
@@ -69,8 +80,11 @@ class CanonicalMember:
     source_layout: SourceLayout
     unit_axis: UnitAxis
     destination: SegmentSelection | IndexSelection
-    source_indices: tuple[int, ...] | None = None
-    embed_dim: int | None = None
+    calculation_source_indices: tuple[int, ...] | None = None
+    pruning_indices_by_unit: tuple[tuple[int, ...], ...] | None = None
+    projection_out_features: int | None = None
+    projection_in_features: int | None = None
+    pruning_index_layout: PruningIndexLayout | None = None
     num_heads: int | None = None
     head_dim: int | None = None
 
@@ -78,9 +92,24 @@ class CanonicalMember:
     def unit_indices(self) -> tuple[int, ...]:
         if isinstance(self.destination, SegmentSelection):
             return tuple(
-                range(self.destination.start, self.destination.start + self.destination.length)
+                range(
+                    self.destination.start,
+                    self.destination.start + self.destination.length,
+                )
             )
         return self.destination.indices
+
+    @property
+    def source_indices(self) -> tuple[int, ...] | None:
+        return self.calculation_source_indices
+
+    @property
+    def pruning_source_indices(self) -> tuple[tuple[int, ...], ...] | None:
+        return self.pruning_indices_by_unit
+
+    @property
+    def embed_dim(self) -> int | None:
+        return self.projection_out_features
 
 
 @dataclass(frozen=True)
@@ -118,11 +147,13 @@ def canonicalize_groups(
             prune_dim=prune_dim,
             prune_num_heads=prune_num_heads,
         )
+
         group_length = (
             attention.output_length
             if attention is not None
             else len(member_root_indices(items[0]))
         )
+
         unit_kind = unit_kind_for_attention(attention)
         root_to_position = root_position_map(items[0])
 
@@ -210,9 +241,15 @@ def canonical_member_for_raw_member(
             module=module,
             handler=handler,
             source_layout=qkv_layout,
+            calculation_source_indices=member_local_indices(member),
+            pruning_indices_by_unit=pruning_indices_by_unit_for_attention(
+                attention,
+            ),
             unit_axis=attention.unit_axis,
             destination=SegmentSelection(group_offset, group_length),
-            embed_dim=attention.embed_dim,
+            projection_out_features=attention.projection_out_features,
+            projection_in_features=attention.projection_in_features,
+            pruning_index_layout=attention.pruning_index_layout,
             num_heads=attention.num_heads,
             head_dim=attention.head_dim,
         )
@@ -237,7 +274,15 @@ def canonical_member_for_raw_member(
         source_layout=SourceLayout.PLAIN,
         unit_axis=unit_axis,
         destination=destination,
-        embed_dim=None if attention is None else attention.embed_dim,
+        projection_out_features=(
+            None if attention is None else attention.projection_out_features
+        ),
+        projection_in_features=(
+            None if attention is None else attention.projection_in_features
+        ),
+        pruning_index_layout=(
+            None if attention is None else attention.pruning_index_layout
+        ),
         num_heads=None if attention is None else attention.num_heads,
         head_dim=None if attention is None else attention.head_dim,
     )
@@ -297,6 +342,11 @@ def attention_unit_config(
                     else SourceLayout.SEPARATE_QKV
                 ),
                 embed_dim=int(module.embed_dim),
+                projection_in_features=int(
+                    module.in_proj_weight.shape[1]
+                    if module.in_proj_weight is not None
+                    else module.embed_dim
+                ),
                 num_heads=heads,
                 prune_dim=prune_dim,
                 prune_num_heads=prune_num_heads,
@@ -312,6 +362,7 @@ def attention_unit_config(
                 source_module=module,
                 source_layout=SourceLayout.FUSED_QKV,
                 embed_dim=int(module.out_features // 3),
+                projection_in_features=int(module.in_features),
                 num_heads=int(num_heads[module]),
                 prune_dim=prune_dim,
                 prune_num_heads=prune_num_heads,
@@ -325,6 +376,7 @@ def make_attention_config(
     source_module: nn.Module,
     source_layout: SourceLayout,
     embed_dim: int,
+    projection_in_features: int,
     num_heads: int,
     prune_dim: bool | None,
     prune_num_heads: bool,
@@ -334,34 +386,46 @@ def make_attention_config(
     if embed_dim % num_heads != 0:
         raise ValueError("Attention embed_dim must be divisible by num_heads.")
 
+    pruning_index_layout = (
+        PruningIndexLayout.EMBED_SPACE
+        if isinstance(source_module, nn.MultiheadAttention)
+        else PruningIndexLayout.FUSED_QKV_ROW_SPACE
+    )
+
     head_dim = embed_dim // num_heads
     if prune_num_heads:
         return AttentionUnitConfig(
             source_module=source_module,
             source_layout=source_layout,
-            embed_dim=embed_dim,
+            projection_out_features=embed_dim,
+            projection_in_features=projection_in_features,
             num_heads=num_heads,
             unit_axis=UnitAxis.QKV_HEAD,
             output_length=num_heads,
+            pruning_index_layout=pruning_index_layout,
         )
 
     if prune_dim:
         return AttentionUnitConfig(
             source_module=source_module,
             source_layout=source_layout,
-            embed_dim=embed_dim,
+            projection_out_features=embed_dim,
+            projection_in_features=projection_in_features,
             num_heads=num_heads,
             unit_axis=UnitAxis.QKV_HEAD_DIM,
             output_length=head_dim,
+            pruning_index_layout=pruning_index_layout,
         )
 
     return AttentionUnitConfig(
         source_module=source_module,
         source_layout=source_layout,
-        embed_dim=embed_dim,
+        projection_out_features=embed_dim,
+        projection_in_features=projection_in_features,
         num_heads=num_heads,
         unit_axis=UnitAxis.QKV_CHANNEL,
         output_length=embed_dim,
+        pruning_index_layout=pruning_index_layout,
     )
 
 
@@ -376,7 +440,10 @@ def qkv_source_layout_for_member(
     if isinstance(module, nn.MultiheadAttention):
         return attention.source_layout
 
-    if isinstance(module, nn.Linear) and member.dep.handler == prune_linear_out_channels:
+    if (
+        isinstance(module, nn.Linear)
+        and member.dep.handler == prune_linear_out_channels
+    ):
         return attention.source_layout
 
     return None
@@ -410,6 +477,47 @@ def unit_axis_for_plain_member(module: nn.Module, handler) -> UnitAxis | None:
     return None
 
 
+def pruning_indices_by_unit_for_attention(
+    attention: AttentionUnitConfig,
+) -> tuple[tuple[int, ...], ...]:
+    if attention.unit_axis == UnitAxis.QKV_CHANNEL:
+        return tuple((index,) for index in range(attention.projection_out_features))
+
+    if attention.num_heads is None or attention.head_dim is None:
+        raise ValueError("Head-based attention pruning indices require num_heads.")
+
+    if attention.pruning_index_layout == PruningIndexLayout.EMBED_SPACE:
+        qkv_offsets = (0,)
+    else:
+        width = attention.projection_out_features
+        qkv_offsets = (0, width, 2 * width)
+
+    if attention.unit_axis == UnitAxis.QKV_HEAD:
+        return tuple(
+            tuple(
+                qkv_offset + channel
+                for qkv_offset in qkv_offsets
+                for channel in range(
+                    head * attention.head_dim,
+                    (head + 1) * attention.head_dim,
+                )
+            )
+            for head in range(attention.num_heads)
+        )
+
+    if attention.unit_axis == UnitAxis.QKV_HEAD_DIM:
+        return tuple(
+            tuple(
+                qkv_offset + head * attention.head_dim + dim
+                for qkv_offset in qkv_offsets
+                for head in range(attention.num_heads)
+            )
+            for dim in range(attention.head_dim)
+        )
+
+    raise ValueError(f"Unsupported attention unit axis: {attention.unit_axis}")
+
+
 def semantic_destinations_for_indices(
     indices: Iterable[int],
     *,
@@ -418,7 +526,7 @@ def semantic_destinations_for_indices(
 ) -> tuple[int, ...]:
     if attention.unit_axis == UnitAxis.QKV_CHANNEL:
         return tuple(
-            int(group_offset) + (int(index) % attention.embed_dim)
+            int(group_offset) + (int(index) % attention.projection_out_features)
             for index in indices
         )
 
@@ -427,7 +535,7 @@ def semantic_destinations_for_indices(
 
     destinations: list[int] = []
     for index in indices:
-        embed_index = int(index) % attention.embed_dim
+        embed_index = int(index) % attention.projection_out_features
         if attention.unit_axis == UnitAxis.QKV_HEAD:
             destination = embed_index // attention.head_dim
         elif attention.unit_axis == UnitAxis.QKV_HEAD_DIM:

@@ -76,9 +76,17 @@ def _model_and_groups():
     return model, canonicalize_groups((hidden_group, output_group))
 
 
+def _tracker_from_groups(model, groups, **kwargs) -> WeightTracker:
+    tracker = WeightTracker(model, **kwargs)
+    tracker.groups = list(groups)
+    tracker.canonical_groups = tuple(groups)
+    tracker.calculations.clear()
+    return tracker
+
+
 def test_weight_tracker_builds_public_calculations_from_specs() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     calculations = tracker.ensure_calculations(
         (
@@ -150,7 +158,7 @@ def test_module_axis_and_bitrates_share_weighted_module_order() -> None:
     model.fc1.activation_bitrate = 8
     model.fc1.weight_bitrate = 2
     model.fc2.bitrate = 4
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     calculations = tracker.ensure_calculations(
         (
@@ -192,10 +200,10 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
         num_heads={model.qkv: 2},
         prune_dim=True,
     )
-    tracker = WeightTracker(
+    tracker = _tracker_from_groups(
         model,
+        groups,
         example_inputs=torch.randn(1, 4),
-        groups=groups,
         num_heads={model.qkv: 2},
         prune_dim=True,
     )
@@ -273,7 +281,7 @@ def test_feature_only_module_axis_plan_uses_output_cost_axis() -> None:
             ),
         )
     )
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
     calculations = tracker.ensure_calculations(
         (
             CalcType.UNIT_ACTIVE_MASK,
@@ -296,7 +304,7 @@ def test_feature_only_module_axis_plan_uses_output_cost_axis() -> None:
 
 def test_active_macs_uses_module_axis_cost_indices_calculation() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, example_inputs=torch.randn(1, 2), groups=groups)
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
 
     active_macs = tracker.get_calculation(CalcType.ACTIVE_MACS_PR_MODULE)
     cost_indices = tracker.get_calculation(CalcType.MODULE_AXIS_COST_INDICES)
@@ -313,7 +321,7 @@ def test_missing_groups_fail_for_group_required_calculations() -> None:
 
 def test_circular_calculation_dependencies_fail_clearly(monkeypatch) -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     monkeypatch.setitem(
         calc_impl.CALCULATION_SPECS,

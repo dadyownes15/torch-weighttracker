@@ -5,9 +5,9 @@ from types import SimpleNamespace
 import torch
 import torch.nn as nn
 
+from tests.test_calculation_specs import _tracker_from_groups
 from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.canonical_units import canonicalize_groups
-from torch_weighttracker.weight_tracker import WeightTracker
 from torch_weighttracker.torch_pruning.pruner.function import (
     prune_batchnorm_out_channels,
     prune_conv_in_channels,
@@ -15,6 +15,7 @@ from torch_weighttracker.torch_pruning.pruner.function import (
     prune_linear_in_channels,
     prune_linear_out_channels,
 )
+from torch_weighttracker.weight_tracker import WeightTracker
 
 
 class FakeGroup:
@@ -65,7 +66,7 @@ def _linear_chain_tracker() -> WeightTracker:
         _member(model.fc2, prune_linear_out_channels, (0,)),
     )
     groups = canonicalize_groups((hidden_group, output_group))
-    return WeightTracker(model, groups=groups)
+    return _tracker_from_groups(model, groups)
 
 
 def test_param_pr_unit_linear_chain_uses_cross_group_removed_units() -> None:
@@ -117,9 +118,9 @@ def test_param_pr_unit_qkv_group_keeps_static_opposite_axis_cost() -> None:
         prune_dim=False,
         prune_num_heads=False,
     )
-    tracker = WeightTracker(
+    tracker = _tracker_from_groups(
         model,
-        groups=groups,
+        groups,
         num_heads={model.qkv: 2},
         prune_dim=False,
         prune_num_heads=False,
@@ -163,7 +164,7 @@ def test_param_pr_unit_conv_chain_applies_kernel_area_change_edges() -> None:
         _member(model.conv2, prune_conv_out_channels, (0, 1, 2, 3)),
     )
     groups = canonicalize_groups((hidden_group, output_group))
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     baseline = tracker.get_calculation(CalcType.BASELINE_PARAM_PR_UNIT_PR_GROUP)
     change = tracker.get_calculation(CalcType.GROUP_UNIT_PARAM_CHANGE)
@@ -201,13 +202,16 @@ def test_param_pr_unit_dedupes_duplicate_members_on_same_module_axis() -> None:
         _member(model.fc2, prune_linear_out_channels, (0,)),
     )
     groups = canonicalize_groups((hidden_group, output_group))
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     baseline = tracker.get_calculation(CalcType.BASELINE_PARAM_PR_UNIT_PR_GROUP)
     change = tracker.get_calculation(CalcType.GROUP_UNIT_PARAM_CHANGE)
 
     torch.testing.assert_close(baseline(), torch.tensor([3.0, 3.0]))
-    torch.testing.assert_close(change(torch.tensor([0.0, 1.0])), torch.tensor([1.0, 0.0]))
+    torch.testing.assert_close(
+        change(torch.tensor([0.0, 1.0])),
+        torch.tensor([1.0, 0.0]),
+    )
 
 
 class TinyResidualBlock(nn.Module):
@@ -259,7 +263,11 @@ class TinyResidualStage(nn.Module):
 def _residual_stage_groups(model: TinyResidualStage):
     downsample_group = FakeGroup(
         _member(model.block2.downsample[0], prune_conv_out_channels, tuple(range(8))),
-        _member(model.block2.downsample[1], prune_batchnorm_out_channels, tuple(range(8))),
+        _member(
+            model.block2.downsample[1],
+            prune_batchnorm_out_channels,
+            tuple(range(8)),
+        ),
         _member(model.block2.bn2, prune_batchnorm_out_channels, tuple(range(8))),
         _member(model.head, prune_linear_in_channels, tuple(range(8))),
         _member(model.block2.conv2, prune_conv_out_channels, tuple(range(8))),
@@ -330,7 +338,7 @@ def test_param_pr_unit_residual_downsample_stage_tracks_cross_group_costs() -> N
     model = TinyResidualStage()
     _fill_residual_stage(model)
     _zero_residual_group_units(model)
-    tracker = WeightTracker(model, groups=_residual_stage_groups(model))
+    tracker = _tracker_from_groups(model, _residual_stage_groups(model))
 
     baseline = tracker.get_calculation(CalcType.BASELINE_PARAM_PR_UNIT_PR_GROUP)
     change = tracker.get_calculation(CalcType.GROUP_UNIT_PARAM_CHANGE)

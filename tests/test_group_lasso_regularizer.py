@@ -7,7 +7,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from tests.test_calculation_specs import _model_and_groups
+from tests.test_calculation_specs import _model_and_groups, _tracker_from_groups
 from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.canonical_units import canonicalize_groups
 from torch_weighttracker.regularizers import RegularizerType
@@ -105,7 +105,7 @@ def test_group_lasso_requires_explicit_calculations() -> None:
 
 def test_group_lasso_linear_chain_exact_values_and_gradients() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     expected_l2 = torch.tensor(
         [
@@ -175,7 +175,7 @@ def test_group_lasso_linear_chain_exact_values_and_gradients() -> None:
 
 def test_group_lasso_include_filters_members_not_weighted_modules() -> None:
     model, groups = _model_and_groups()
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     context = GroupLasso.calculation_context(tracker, include=[model.fc1])
     assert context is not None
@@ -225,7 +225,7 @@ def test_group_lasso_conv_bn_chain_exact_values_and_gradients() -> None:
             ),
         )
     )
-    tracker = WeightTracker(model, groups=groups)
+    tracker = _tracker_from_groups(model, groups)
 
     _assert_group_lasso_calculations(
         tracker,
@@ -406,9 +406,9 @@ def test_group_lasso_qkv_projection_exact_values_and_gradients(
     assert tuple(group.length for group in groups) == tuple(
         int(size) for size in case.expected_group_sizes
     )
-    tracker = WeightTracker(
+    tracker = _tracker_from_groups(
         model,
-        groups=groups,
+        groups,
         num_heads={model.qkv: 2},
         prune_dim=case.prune_dim,
         prune_num_heads=case.prune_num_heads,

@@ -19,8 +19,6 @@ tracker = WeightTracker(model, example_inputs=torch.randn(1, 4))
 print(tracker.view_structures())
 ```
 
-## TRANSFORMS NOT FULLY SUPPORTED YET
-
 ## Installation
 
 ```bash
@@ -61,6 +59,106 @@ Current use cases:
   group.
 - Build structural metrics that aggregate many weight tensors into one value per
   pruning unit.
+- Physically prune zeroed canonical units, including attention heads, after
+  sparsity-aware training.
+
+## Current Pruning Notes
+
+`WeightTracker` can now inspect zeroed canonical units with `view_zero_units()`
+and physically remove them with `prune_zero_units()`. You can also remove one
+canonical unit directly with `prune_unit(group_id, unit_id)`.
+
+Physical pruning changes module shapes and rebuilds the dependency state. Any
+registered trackers or regularizers are cleared after `prune_unit()` or
+`prune_zero_units()`, so recreate them before collecting metrics or losses from
+the pruned model:
+
+```python
+metrics_before = tracker.create_tracker(
+    "structured_bops",
+    log_total_bops=True,
+).track()
+
+tracker.prune_zero_units()
+
+metrics_after = tracker.create_tracker(
+    "structured_bops",
+    log_total_bops=True,
+).track()
+```
+
+Fake pruning remains useful during training because it zeros the selected
+canonical unit while keeping the module shapes intact:
+
+```python
+tracker.create_tracker("structured_bops", log_total_bops=True)
+metrics_before = tracker.track()
+
+tracker.fake_prune_unit(group_id=3, unit_id=0)
+tracker.fake_prune_unit(group_id=3, unit_id=2)
+
+metrics_after = tracker.track()
+```
+
+## timm ViT Attention Heads
+
+The `torch_weighttracker.integrations.timm` helpers make timm ViT attention
+blocks visible as head-level pruning groups. `infer_vit_num_heads(model)` maps
+each fused `Attention.qkv` projection to its current head count, and
+`sync_vit_attention_metadata` updates timm attention metadata after physical
+head pruning.
+
+```python
+import timm
+import torch
+
+from torch_weighttracker import WeightTracker
+from torch_weighttracker.integrations.timm import (
+    infer_vit_num_heads,
+    sync_vit_attention_metadata,
+)
+
+example_inputs = torch.rand(1, 3, 224, 224)
+model = timm.create_model(
+    "vit_base_patch16_224",
+    pretrained=False,
+    num_classes=10,
+)
+
+tracker = WeightTracker(
+    model,
+    example_inputs=example_inputs,
+    num_heads=infer_vit_num_heads(model),
+    prune_num_heads=True,
+    post_prune_hooks=(sync_vit_attention_metadata,),
+)
+
+print(tracker.view_structures())
+
+tracker.create_tracker("structured_bops", log_total_bops=True)
+metrics_before = tracker.track()
+
+# Example: zero two attention heads in the group reported by view_structures().
+tracker.fake_prune_unit(group_id=3, unit_id=0)
+tracker.fake_prune_unit(group_id=3, unit_id=2)
+metrics_after_fake_prune = tracker.track()
+
+# Convert zeroed units into real shape changes, then recreate metric trackers.
+tracker.prune_zero_units()
+metrics_after_physical_prune = tracker.create_tracker(
+    "structured_bops",
+    log_total_bops=True,
+).track()
+
+print(metrics_before["structured_bops"])
+print(metrics_after_fake_prune["structured_bops"])
+print(metrics_after_physical_prune["structured_bops"])
+```
+
+For timm ViTs, head pruning removes complete q/k/v head slices from the fused
+`qkv` projection and the corresponding projection input channels. The sync hook
+keeps `num_heads`, `attn_dim`, `head_dim`, and `scale` consistent with the new
+shape so the pruned model can still run a forward pass.
 
 
 ## Group Lasso
@@ -285,7 +383,7 @@ Per-group values are emitted under keys such as
 The main API is `WeightTracker`. Internally it is split into a few layers:
 
 1. Dependency discovery: `WeightTracker` builds dependency groups from the model
-   and `example_inputs`, or accepts precomputed groups.
+   and `example_inputs`.
 2. Canonical units: `canonical_units.py` normalizes raw dependency groups into
    `CanonicalUnitGroup` objects. These give channels, features, attention heads,
    and head dimensions a shared unit index.

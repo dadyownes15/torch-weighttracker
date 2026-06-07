@@ -421,8 +421,8 @@ def test_transformer_attention_head_prune_matches_pruned_fvcore_modules() -> Non
     axis_counts = _axis_counts_by_module(tracker)
 
     torch.testing.assert_close(axis_counts["attn"], torch.tensor([0.0, 3.0]))
-    torch.testing.assert_close(axis_counts["mlp_in"], torch.tensor([3.0, 0.0]))
-    torch.testing.assert_close(axis_counts["head"], torch.tensor([3.0, 0.0]))
+    torch.testing.assert_close(axis_counts["mlp_in"], torch.tensor([3.0, 32.0]))
+    torch.testing.assert_close(axis_counts["head"], torch.tensor([3.0, 5.0]))
 
     _prune_group(group, (0, 1, 2, 3))
 

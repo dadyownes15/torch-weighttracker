@@ -666,6 +666,11 @@ class WeightTracker:
                 Tracks active structured bit operations from active runtime MACs
                 and per-module activation/weight bitrates. Default output
                 includes only "structured_bops_compression".
+            TrackerType.UNSTRUCTURED_BOPS / "unstructured_bops":
+                Tracks active unstructured bit operations from baseline runtime
+                MACs, per-module zero-weight fractions, and per-module
+                activation/weight bitrates. Default output includes only
+                "unstructured_bops_compression".
             TrackerType.L2_NORM_DISTRIBUTION / "l2_norm_distribution":
                 Tracks each canonical group's per-prune-unit L2 norm
                 distribution. Output keys use
@@ -695,9 +700,9 @@ class WeightTracker:
                 a list/iterable of tracker type enums or string values to
                 create together. Single values return one tracker. Iterable
                 values return a list of trackers in the requested order.
-                Valid strings are "structured_bops", "l2_norm_distribution",
-                "unstructured_sparsity", "nvidia_2_4_sparsity", and
-                "group_pruning_summary".
+                Valid strings are "structured_bops", "unstructured_bops",
+                "l2_norm_distribution", "unstructured_sparsity",
+                "nvidia_2_4_sparsity", and "group_pruning_summary".
             include: Optional module instances or module types to keep in this
                 tracker's calculation context. Module instances include their
                 descendants.
@@ -724,6 +729,24 @@ class WeightTracker:
             log_compression_rate (bool): Include the legacy
                 "structured_bops_compression_rate" alias, computed as
                 1 - structured_bops / structured_bops_baseline in this
+                tracker's calculation context. The baseline currently uses
+                hard-coded 32-bit activation and weight bitrates. Default:
+                False.
+
+        UnstructuredBOPs kwargs:
+            log_total_bops (bool): Include active and baseline unstructured BOP
+                totals. When log_layerwise_stats=True, also include
+                per-module BOP dictionaries. Default: False.
+            log_module_names (bool): Include "unstructured_bops_module_names",
+                aligned with per-module metric dictionaries. Default: False.
+            log_layerwise_stats (bool): Include per-module UnstructuredBOPs
+                metric dictionaries. Adds
+                "unstructured_bops_compression_rate_pr_module"; when
+                log_total_bops=True, also adds "unstructured_bops_pr_module"
+                and "unstructured_bops_baseline_pr_module". Default: False.
+            log_compression_rate (bool): Include the
+                "unstructured_bops_compression_rate" alias, computed as
+                1 - unstructured_bops / unstructured_bops_baseline in this
                 tracker's calculation context. The baseline currently uses
                 hard-coded 32-bit activation and weight bitrates. Default:
                 False.

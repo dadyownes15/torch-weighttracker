@@ -182,6 +182,26 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
     assert tracker.trackers == [structured_bops]
 
 
+def test_create_tracker_wires_unstructured_bops_from_required_calculations() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+
+    unstructured_bops = tracker.create_tracker(TrackerType.UNSTRUCTURED_BOPS)
+    metrics = unstructured_bops.track()
+
+    assert metrics.keys() == {
+        "unstructured_bops_compression",
+    }
+    torch.testing.assert_close(
+        metrics["unstructured_bops_compression"],
+        torch.tensor(1.0 - 80.0 / 9216.0),
+    )
+    assert tracker.trackers == [unstructured_bops]
+
+
 @pytest.mark.parametrize(
     "tracker_types",
     (
@@ -356,6 +376,17 @@ def test_structured_bops_ignore_all_weighted_modules_raises() -> None:
     with pytest.raises(ValueError, match="removed all canonical members"):
         tracker.create_tracker(
             TrackerType.STRUCTURED_BOPS,
+            ignore=[model],
+        )
+
+
+def test_unstructured_bops_filtering_all_weighted_modules_raises() -> None:
+    model, groups = _model_and_groups()
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+
+    with pytest.raises(ValueError, match="weighted modules"):
+        tracker.create_tracker(
+            TrackerType.UNSTRUCTURED_BOPS,
             ignore=[model],
         )
 
@@ -634,6 +665,28 @@ def test_structured_bops_metric_module_names_follow_context() -> None:
     }
 
 
+def test_unstructured_bops_metric_module_names_follow_context() -> None:
+    model, groups = _model_and_groups()
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+
+    full_metrics = tracker.create_tracker(
+        "unstructured_bops",
+        log_module_names=True,
+    ).track()
+    filtered_metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        ignore=[model.fc2],
+        log_module_names=True,
+        log_layerwise_stats=True,
+    ).track()
+
+    assert full_metrics["unstructured_bops_module_names"] == ("fc1", "fc2")
+    assert filtered_metrics["unstructured_bops_module_names"] == ("fc1",)
+    assert filtered_metrics["unstructured_bops_compression_rate_pr_module"].keys() == {
+        "fc1"
+    }
+
+
 def test_structured_bops_default_compression_follows_context() -> None:
     model, groups = _model_and_groups()
     model.fc1.activation_bitrate = 8
@@ -662,6 +715,35 @@ def test_structured_bops_default_compression_follows_context() -> None:
     torch.testing.assert_close(
         filtered_metrics["structured_bops_compression"],
         torch.tensor(1.0 - 64.0 / 6144.0),
+    )
+
+
+def test_unstructured_bops_default_compression_follows_context() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+
+    full_metrics = tracker.create_tracker(TrackerType.UNSTRUCTURED_BOPS).track()
+    filtered_metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        ignore=[model.fc2],
+    ).track()
+
+    assert full_metrics.keys() == {
+        "unstructured_bops_compression",
+    }
+    torch.testing.assert_close(
+        full_metrics["unstructured_bops_compression"],
+        torch.tensor(1.0 - 80.0 / 9216.0),
+    )
+    assert filtered_metrics.keys() == {
+        "unstructured_bops_compression",
+    }
+    torch.testing.assert_close(
+        filtered_metrics["unstructured_bops_compression"],
+        torch.tensor(1.0 - 48.0 / 6144.0),
     )
 
 
@@ -699,6 +781,40 @@ def test_structured_bops_layerwise_stats_are_opt_in() -> None:
     )
 
 
+def test_unstructured_bops_layerwise_stats_are_opt_in() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+
+    total_only = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_total_bops=True,
+    ).track()
+    layerwise = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_layerwise_stats=True,
+    ).track()
+
+    assert total_only.keys() == {
+        "unstructured_bops_compression",
+        "unstructured_bops",
+        "unstructured_bops_baseline",
+    }
+    assert layerwise.keys() == {
+        "unstructured_bops_compression",
+        "unstructured_bops_compression_rate_pr_module",
+    }
+    _assert_tensor_dict_close(
+        layerwise["unstructured_bops_compression_rate_pr_module"],
+        {
+            "fc1": torch.tensor(1.0 - 48.0 / 6144.0),
+            "fc2": torch.tensor(1.0 - 32.0 / 3072.0),
+        },
+    )
+
+
 def test_structured_bops_total_bops_logging_is_opt_in() -> None:
     model, groups = _model_and_groups()
     model.fc1.activation_bitrate = 8
@@ -729,6 +845,70 @@ def test_structured_bops_total_bops_logging_is_opt_in() -> None:
     _assert_tensor_dict_close(
         metrics["structured_bops_baseline_pr_module"],
         {"fc1": torch.tensor(6144.0), "fc2": torch.tensor(3072.0)},
+    )
+
+
+def test_unstructured_bops_total_bops_logging_is_opt_in() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+
+    metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_total_bops=True,
+        log_layerwise_stats=True,
+        log_compression_rate=True,
+    ).track()
+
+    torch.testing.assert_close(metrics["unstructured_bops"], torch.tensor(80.0))
+    torch.testing.assert_close(
+        metrics["unstructured_bops_baseline"],
+        torch.tensor(9216.0),
+    )
+    torch.testing.assert_close(
+        metrics["unstructured_bops_compression_rate"],
+        metrics["unstructured_bops_compression"],
+    )
+    _assert_tensor_dict_close(
+        metrics["unstructured_bops_pr_module"],
+        {"fc1": torch.tensor(48.0), "fc2": torch.tensor(32.0)},
+    )
+    _assert_tensor_dict_close(
+        metrics["unstructured_bops_baseline_pr_module"],
+        {"fc1": torch.tensor(6144.0), "fc2": torch.tensor(3072.0)},
+    )
+
+
+def test_unstructured_bops_reflects_weight_changes_after_creation() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+    unstructured_bops = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_total_bops=True,
+        log_layerwise_stats=True,
+    )
+
+    before = unstructured_bops.track()
+
+    with torch.no_grad():
+        model.fc2.weight.zero_()
+
+    after = unstructured_bops.track()
+
+    torch.testing.assert_close(before["unstructured_bops"], torch.tensor(80.0))
+    torch.testing.assert_close(after["unstructured_bops"], torch.tensor(48.0))
+    torch.testing.assert_close(
+        after["unstructured_bops_baseline"],
+        before["unstructured_bops_baseline"],
+    )
+    _assert_tensor_dict_close(
+        after["unstructured_bops_pr_module"],
+        {"fc1": torch.tensor(48.0), "fc2": torch.tensor(0.0)},
     )
 
 

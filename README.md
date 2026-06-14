@@ -49,7 +49,7 @@ tracker.prune_zero_units()
 python -m pip install torch-weighttracker
 ```
 
-Structured BOPs MAC accounting uses `fvcore` for baseline per-module MACs:
+BOPs MAC accounting uses `fvcore` for baseline per-module MACs:
 
 ```bash
 python -m pip install "torch-weighttracker[structured-bops]"
@@ -77,8 +77,8 @@ calculations operate over the canonical units with reusable tensor programs.
 Current use cases:
 
 - Add structured group lasso to a training loss.
-- Track active structured BOPs and compression rate during structured pruning,
-  sparsity-aware training, or quantization-aware training (QAT).
+- Track active structured or unstructured BOPs and compression rate during
+  pruning, sparsity-aware training, or quantization-aware training (QAT).
 - Inspect which modules participate in each channel, feature, head, or head-dim
   group.
 - Build structural metrics that aggregate many weight tensors into one value per
@@ -357,6 +357,59 @@ print(metrics["layers"])
 Values are fractions in `[0, 1]`. Parametrized fake quantization is measured
 through the effective `module.weight`, so quantized zeros count as sparse
 weights.
+
+## Unstructured BOPs
+
+Unstructured BOPs combines each layer's dense runtime MAC count with its
+active weight fraction and activation/weight bit widths:
+
+```python
+import torch
+
+from torch_weighttracker.trackers import TrackerType
+
+metrics = tracker.create_tracker(
+    TrackerType.UNSTRUCTURED_BOPS,
+    include=[model.layer3, model.layer4],
+    ignore=[torch.nn.BatchNorm2d],
+).track()
+
+print(metrics["unstructured_bops_compression"])
+
+raw_metrics = tracker.create_tracker(
+    TrackerType.UNSTRUCTURED_BOPS,
+    include=[model.layer3, model.layer4],
+    ignore=[torch.nn.BatchNorm2d],
+    log_total_bops=True,
+    log_layerwise_stats=True,
+).track()
+
+print(raw_metrics["unstructured_bops"])
+print(raw_metrics["unstructured_bops_pr_module"])
+print(raw_metrics["unstructured_bops_compression_rate_pr_module"])
+```
+
+For each weighted module $m$:
+
+$$
+\mathit{UnstructuredBOPs}_m =
+\mathit{BaselineMACs}_m
+\cdot
+(1 - \mathit{Sparsity}_m)
+\cdot
+b^{\mathrm{act}}_m
+\cdot
+b^{\mathrm{weight}}_m
+$$
+
+Compression uses the same dense 32-bit baseline as structured BOPs:
+
+$$
+\mathit{CompressionRate} =
+1 -
+\frac{\sum_m \mathit{UnstructuredBOPs}_m}
+{\sum_m \mathit{BaselineMACs}_m \cdot 32 \cdot 32}
+$$
 
 ## NVIDIA 2:4 Sparsity
 

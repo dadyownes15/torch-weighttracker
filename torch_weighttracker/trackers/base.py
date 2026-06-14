@@ -11,6 +11,7 @@ from torch_weighttracker.consumer_ignore import FilterItem
 
 class TrackerType(str, Enum):
     STRUCTURED_BOPS = "structured_bops"
+    UNSTRUCTURED_BOPS = "unstructured_bops"
     L2_NORM_DISTRIBUTION = "l2_norm_distribution"
     UNSTRUCTURED_SPARSITY = "unstructured_sparsity"
     NVIDIA_2_4_SPARSITY = "nvidia_2_4_sparsity"
@@ -131,6 +132,11 @@ def tracker_class_for_type(tracker_type: TrackerTypeInput):
         from torch_weighttracker.trackers.structured_bops import StructuredBOPs
 
         return StructuredBOPs
+
+    if tracker_type == TrackerType.UNSTRUCTURED_BOPS:
+        from torch_weighttracker.trackers.unstructured_bops import UnstructuredBOPs
+
+        return UnstructuredBOPs
 
     if tracker_type == TrackerType.L2_NORM_DISTRIBUTION:
         from torch_weighttracker.trackers.l2_norm_distribution import (

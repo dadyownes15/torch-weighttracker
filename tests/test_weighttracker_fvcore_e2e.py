@@ -87,6 +87,85 @@ class TinyResNetClassifier(nn.Module):
         return self.head(x)
 
 
+class CifarResNet20Block(nn.Module):
+    def __init__(self, in_channels: int, out_channels: int, stride: int = 1) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv2d(
+            in_channels,
+            out_channels,
+            kernel_size=3,
+            stride=stride,
+            padding=1,
+            bias=False,
+        )
+        self.bn1 = nn.BatchNorm2d(out_channels)
+        self.relu = nn.ReLU()
+        self.conv2 = nn.Conv2d(
+            out_channels,
+            out_channels,
+            kernel_size=3,
+            padding=1,
+            bias=False,
+        )
+        self.bn2 = nn.BatchNorm2d(out_channels)
+        self.shortcut = (
+            nn.Sequential(
+                nn.Conv2d(
+                    in_channels,
+                    out_channels,
+                    kernel_size=1,
+                    stride=stride,
+                    bias=False,
+                ),
+                nn.BatchNorm2d(out_channels),
+            )
+            if stride != 1 or in_channels != out_channels
+            else nn.Identity()
+        )
+
+    def forward(self, x: Tensor) -> Tensor:
+        out = self.relu(self.bn1(self.conv1(x)))
+        out = self.bn2(self.conv2(out))
+        out = out + self.shortcut(x)
+        return self.relu(out)
+
+
+class CifarResNet20(nn.Module):
+    def __init__(self, num_classes: int = 10) -> None:
+        super().__init__()
+        self.stem = nn.Conv2d(3, 16, kernel_size=3, padding=1, bias=False)
+        self.bn = nn.BatchNorm2d(16)
+        self.relu = nn.ReLU()
+        self.layer1 = self._make_stage(16, 16, blocks=3, stride=1)
+        self.layer2 = self._make_stage(16, 32, blocks=3, stride=2)
+        self.layer3 = self._make_stage(32, 64, blocks=3, stride=2)
+        self.avgpool = nn.AdaptiveAvgPool2d((1, 1))
+        self.fc = nn.Linear(64, num_classes)
+
+    def _make_stage(
+        self,
+        in_channels: int,
+        out_channels: int,
+        *,
+        blocks: int,
+        stride: int,
+    ) -> nn.Sequential:
+        layers = [CifarResNet20Block(in_channels, out_channels, stride)]
+        layers.extend(
+            CifarResNet20Block(out_channels, out_channels)
+            for _ in range(1, blocks)
+        )
+        return nn.Sequential(*layers)
+
+    def forward(self, x: Tensor) -> Tensor:
+        x = self.relu(self.bn(self.stem(x)))
+        x = self.layer1(x)
+        x = self.layer2(x)
+        x = self.layer3(x)
+        x = self.avgpool(x).flatten(1)
+        return self.fc(x)
+
+
 class TinyRMSNorm(nn.Module):
     def __init__(self, hidden_size: int) -> None:
         super().__init__()
@@ -105,6 +184,48 @@ class TinyRMSNormLinear(nn.Module):
 
     def forward(self, x: Tensor) -> Tensor:
         return self.proj(self.norm(x))
+
+
+class LargerTransformerBlock(nn.Module):
+    def __init__(self, embed_dim: int, num_heads: int, mlp_dim: int) -> None:
+        super().__init__()
+        self.attn = nn.MultiheadAttention(
+            embed_dim=embed_dim,
+            num_heads=num_heads,
+            batch_first=True,
+        )
+        self.norm1 = nn.LayerNorm(embed_dim)
+        self.mlp_in = nn.Linear(embed_dim, mlp_dim)
+        self.activation = nn.GELU()
+        self.mlp_out = nn.Linear(mlp_dim, embed_dim)
+        self.norm2 = nn.LayerNorm(embed_dim)
+
+    def forward(self, x: Tensor) -> Tensor:
+        attn_out, _ = self.attn(x, x, x, need_weights=False)
+        x = self.norm1(x + attn_out)
+        mlp_out = self.mlp_out(self.activation(self.mlp_in(x)))
+        return self.norm2(x + mlp_out)
+
+
+class LargerTransformerClassifier(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.token_embed = nn.Embedding(48, 24)
+        self.position_embed = nn.Embedding(12, 24)
+        self.blocks = nn.ModuleList(
+            [LargerTransformerBlock(24, 4, 48) for _ in range(2)]
+        )
+        self.head = nn.Linear(24, 7)
+
+    def forward(self, token_ids: Tensor) -> Tensor:
+        positions = torch.arange(
+            token_ids.size(1),
+            device=token_ids.device,
+        ).unsqueeze(0)
+        x = self.token_embed(token_ids) + self.position_embed(positions)
+        for block in self.blocks:
+            x = block(x)
+        return self.head(x[:, 0])
 
 
 def _module_names(model: nn.Module) -> dict[nn.Module, str]:
@@ -249,6 +370,95 @@ def _fvcore_by_module(model: nn.Module, example_inputs) -> dict[str, int]:
     return dict(analysis.by_module())
 
 
+def _effective_weight_tensors(module: nn.Module) -> tuple[torch.Tensor, ...]:
+    if isinstance(module, nn.MultiheadAttention):
+        in_proj_weight = getattr(module, "in_proj_weight", None)
+        if isinstance(in_proj_weight, torch.Tensor):
+            return (in_proj_weight,)
+
+        weights = tuple(
+            weight
+            for weight in (
+                getattr(module, "q_proj_weight", None),
+                getattr(module, "k_proj_weight", None),
+                getattr(module, "v_proj_weight", None),
+            )
+            if isinstance(weight, torch.Tensor)
+        )
+        if weights:
+            return weights
+
+    weight = getattr(module, "weight", None)
+    if isinstance(weight, torch.Tensor):
+        return (weight,)
+
+    return ()
+
+
+def _active_weight_fraction(module: nn.Module) -> float:
+    weights = _effective_weight_tensors(module)
+    total_count = sum(weight.numel() for weight in weights)
+    if total_count == 0:
+        return 0.0
+    nonzero_count = sum(int(weight.detach().ne(0).sum().item()) for weight in weights)
+    return nonzero_count / total_count
+
+
+def _expected_unstructured_bops_pr_module(
+    tracker: WeightTracker,
+    example_inputs,
+    entries: tuple[tuple[str, nn.Module], ...] | None = None,
+    bitrates: torch.Tensor | None = None,
+) -> torch.Tensor:
+    entries = (
+        tuple(tracker._get_weighted_module_entries()) if entries is None else entries
+    )
+    by_module = _fvcore_by_module(tracker.model, example_inputs)
+    bitrates = (
+        tracker.get_calculation(CalcType.BITRATE_PR_MODULE)()
+        if bitrates is None
+        else bitrates
+    ).view(-1, 2)
+    values = [
+        float(by_module[name])
+        * _active_weight_fraction(module)
+        * float(bitrates[index].prod())
+        for index, (name, module) in enumerate(entries)
+    ]
+    return torch.tensor(values, dtype=bitrates.dtype, device=bitrates.device)
+
+
+def _expected_bops_baseline_pr_module(
+    tracker: WeightTracker,
+    example_inputs,
+    entries: tuple[tuple[str, nn.Module], ...] | None = None,
+    bitrates: torch.Tensor | None = None,
+) -> torch.Tensor:
+    entries = (
+        tuple(tracker._get_weighted_module_entries()) if entries is None else entries
+    )
+    by_module = _fvcore_by_module(tracker.model, example_inputs)
+    bitrates = (
+        tracker.get_calculation(CalcType.BITRATE_PR_MODULE)()
+        if bitrates is None
+        else bitrates
+    )
+    values = [
+        float(by_module[name]) * 32 * 32
+        for name, _ in entries
+    ]
+    return torch.tensor(values, dtype=bitrates.dtype, device=bitrates.device)
+
+
+def _assert_named_tensor_values_close(
+    actual: dict[str, torch.Tensor],
+    expected_names: tuple[str, ...],
+    expected_values: torch.Tensor,
+) -> None:
+    assert tuple(actual.keys()) == expected_names
+    torch.testing.assert_close(torch.stack(tuple(actual.values())), expected_values)
+
+
 def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None:
     model = TinyResNetClassifier().eval()
     model.stem_conv.activation_bitrate = 8
@@ -280,6 +490,145 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
     )
     torch.testing.assert_close(actual_values, expected)
     torch.testing.assert_close(metrics["structured_bops"], expected.sum())
+
+
+def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
+    model = CifarResNet20().eval()
+    model.stem.activation_bitrate = 8
+    model.stem.weight_bitrate = 4
+    model.layer2[0].conv1.bitrate = 6
+    model.layer3[2].conv2.activation_bitrate = 4
+    model.layer3[2].conv2.weight_bitrate = 2
+    model.fc.bitrate = 8
+    example_inputs = torch.randn(1, 3, 32, 32)
+
+    with torch.no_grad():
+        model.stem.weight[:, :, 0, 0] = 0
+        model.layer1[1].conv2.weight[::2] = 0
+        model.layer2[0].shortcut[0].weight[:, ::2] = 0
+        model.layer3[2].conv1.weight[:, :, :, ::2] = 0
+        model.fc.weight[:, ::3] = 0
+
+    tracker = WeightTracker(
+        model,
+        example_inputs=example_inputs,
+        root_module_types=[nn.Conv2d, nn.Linear],
+    )
+    metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_total_bops=True,
+        log_layerwise_stats=True,
+        log_module_names=True,
+        log_compression_rate=True,
+    ).track()
+    expected = _expected_unstructured_bops_pr_module(tracker, example_inputs)
+    expected_baseline = _expected_bops_baseline_pr_module(tracker, example_inputs)
+    expected_names = tuple(name for name, _ in tracker._get_weighted_module_entries())
+
+    assert metrics["unstructured_bops_module_names"] == expected_names
+    _assert_named_tensor_values_close(
+        metrics["unstructured_bops_pr_module"],
+        expected_names,
+        expected,
+    )
+    _assert_named_tensor_values_close(
+        metrics["unstructured_bops_baseline_pr_module"],
+        expected_names,
+        expected_baseline,
+    )
+    torch.testing.assert_close(metrics["unstructured_bops"], expected.sum())
+    torch.testing.assert_close(
+        metrics["unstructured_bops_baseline"],
+        expected_baseline.sum(),
+    )
+    torch.testing.assert_close(
+        metrics["unstructured_bops_compression"],
+        1.0 - expected.sum() / expected_baseline.sum(),
+    )
+    torch.testing.assert_close(
+        metrics["unstructured_bops_compression_rate"],
+        metrics["unstructured_bops_compression"],
+    )
+
+
+def test_unstructured_bops_matches_fvcore_weighted_macs_for_transformer() -> None:
+    model = LargerTransformerClassifier().eval()
+    model.blocks[0].attn.activation_bitrate = 8
+    model.blocks[0].attn.weight_bitrate = 4
+    model.blocks[0].mlp_in.bitrate = 6
+    model.blocks[1].attn.bitrate = 5
+    model.blocks[1].mlp_out.activation_bitrate = 4
+    model.blocks[1].mlp_out.weight_bitrate = 2
+    model.head.activation_bitrate = 8
+    model.head.weight_bitrate = 3
+    token_ids = torch.randint(0, 48, (1, 12))
+
+    with torch.no_grad():
+        model.token_embed.weight[::5] = 0
+        model.blocks[0].attn.in_proj_weight[::2] = 0
+        model.blocks[0].mlp_in.weight[::3] = 0
+        model.blocks[1].mlp_out.weight[:, ::4] = 0
+        model.head.weight[:, ::2] = 0
+
+    tracker = WeightTracker(
+        model,
+        example_inputs=token_ids,
+        root_module_types=[nn.MultiheadAttention, nn.Linear],
+        num_heads={
+            block.attn: block.attn.num_heads
+            for block in model.blocks
+        },
+    )
+    unstructured_bops = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        ignore=[block.attn.out_proj for block in model.blocks],
+        log_total_bops=True,
+        log_layerwise_stats=True,
+        log_module_names=True,
+        log_compression_rate=True,
+    )
+    metrics = unstructured_bops.track()
+    expected_names = metrics["unstructured_bops_module_names"]
+    all_entries = dict(tracker._get_weighted_module_entries())
+    expected_entries = tuple((name, all_entries[name]) for name in expected_names)
+    bitrates = unstructured_bops.calc(CalcType.BITRATE_PR_MODULE)()
+    expected = _expected_unstructured_bops_pr_module(
+        tracker,
+        token_ids,
+        expected_entries,
+        bitrates,
+    )
+    expected_baseline = _expected_bops_baseline_pr_module(
+        tracker,
+        token_ids,
+        expected_entries,
+        bitrates,
+    )
+
+    assert metrics["unstructured_bops_module_names"] == expected_names
+    _assert_named_tensor_values_close(
+        metrics["unstructured_bops_pr_module"],
+        expected_names,
+        expected,
+    )
+    _assert_named_tensor_values_close(
+        metrics["unstructured_bops_baseline_pr_module"],
+        expected_names,
+        expected_baseline,
+    )
+    torch.testing.assert_close(metrics["unstructured_bops"], expected.sum())
+    torch.testing.assert_close(
+        metrics["unstructured_bops_baseline"],
+        expected_baseline.sum(),
+    )
+    torch.testing.assert_close(
+        metrics["unstructured_bops_compression"],
+        1.0 - expected.sum() / expected_baseline.sum(),
+    )
+    torch.testing.assert_close(
+        metrics["unstructured_bops_compression_rate"],
+        metrics["unstructured_bops_compression"],
+    )
 
 
 def _conv2d_flops(module: nn.Conv2d, output_hw: tuple[int, int], batch_size: int = 1):

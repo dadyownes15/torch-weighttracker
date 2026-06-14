@@ -17,5 +17,5 @@ env/
 tests/ignored/
 docs/
 DEPLOYMENT.dev.md
-scripts/*
+scripts/
 AGENTS.md

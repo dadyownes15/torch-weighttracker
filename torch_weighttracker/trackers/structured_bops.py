@@ -4,12 +4,14 @@ import torch
 
 from torch_weighttracker.calculations import CalcType, CalculationContext
 from torch_weighttracker.consumer_ignore import (
-    ConsumerFilter,
     FilterItem,
     filter_canonical_members,
-    filter_modules,
 )
 from torch_weighttracker.trackers.base import BaseTracker
+from torch_weighttracker.trackers.bops_filter import (
+    bops_consumer_filter,
+    filter_bops_weighted_modules,
+)
 
 
 class StructuredBOPs(BaseTracker):
@@ -45,16 +47,17 @@ class StructuredBOPs(BaseTracker):
         ignore: Iterable[FilterItem] = (),
         **kwargs,
     ) -> CalculationContext | None:
-        filters = ConsumerFilter(include=include, ignore=ignore)
-        if not filters:
-            return None
+        filters = bops_consumer_filter(include=include, ignore=ignore)
 
         return owner._calculation_context(
             canonical_groups=filter_canonical_members(
                 owner.canonical_groups,
                 filters,
             ),
-            weighted_modules=filter_modules(owner._get_weighted_modules(), filters),
+            weighted_modules=filter_bops_weighted_modules(
+                owner._get_weighted_modules(),
+                filters,
+            ),
         )
 
     @classmethod

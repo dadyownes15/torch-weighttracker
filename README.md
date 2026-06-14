@@ -214,7 +214,9 @@ loss.backward()
 
 ## Structured BOPs
 
-Structured BOPs reports compression against a dense 32-bit baseline by default:
+Structured BOPs reports compression against a dense 32-bit baseline by default.
+BOP trackers exclude normalization modules such as batchnorm, layernorm,
+groupnorm, and instancenorm layers by default:
 
 ```python
 import torch
@@ -224,7 +226,6 @@ from torch_weighttracker.trackers import TrackerType
 metrics = tracker.create_tracker(
     TrackerType.STRUCTURED_BOPS,
     include=[model.layer3, model.layer4],
-    ignore=[torch.nn.BatchNorm2d],
 ).track()
 
 print(metrics["structured_bops_compression"])
@@ -232,7 +233,6 @@ print(metrics["structured_bops_compression"])
 raw_metrics = tracker.create_tracker(
     TrackerType.STRUCTURED_BOPS,
     include=[model.layer3, model.layer4],
-    ignore=[torch.nn.BatchNorm2d],
     log_total_bops=True,
     log_layerwise_stats=True,
 ).track()
@@ -371,7 +371,6 @@ from torch_weighttracker.trackers import TrackerType
 metrics = tracker.create_tracker(
     TrackerType.UNSTRUCTURED_BOPS,
     include=[model.layer3, model.layer4],
-    ignore=[torch.nn.BatchNorm2d],
 ).track()
 
 print(metrics["unstructured_bops_compression"])
@@ -379,7 +378,6 @@ print(metrics["unstructured_bops_compression"])
 raw_metrics = tracker.create_tracker(
     TrackerType.UNSTRUCTURED_BOPS,
     include=[model.layer3, model.layer4],
-    ignore=[torch.nn.BatchNorm2d],
     log_total_bops=True,
     log_layerwise_stats=True,
 ).track()

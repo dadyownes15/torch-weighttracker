@@ -33,6 +33,19 @@ class TinyAttentionSparsityModel(nn.Module):
         return y
 
 
+class TinyConvBatchNormHead(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(3, 4, 3, bias=False)
+        self.bn = nn.BatchNorm2d(4)
+        self.fc = nn.Linear(4 * 6 * 6, 2, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.conv(x)
+        x = self.bn(x)
+        return self.fc(x.flatten(1))
+
+
 def _assert_tensor_dict_close(actual, expected: dict[str, torch.Tensor]) -> None:
     assert actual.keys() == expected.keys()
     for key, expected_value in expected.items():
@@ -527,6 +540,42 @@ def test_structured_bops_include_parent_ignore_child_keeps_fc1() -> None:
     _assert_tensor_dict_close(
         metrics["structured_bops_pr_module"],
         {"fc1": torch.tensor(64.0)},
+    )
+
+
+def test_bops_trackers_default_ignore_normalization_weighted_modules() -> None:
+    model = TinyConvBatchNormHead().eval()
+    tracker = WeightTracker(
+        model,
+        example_inputs=torch.randn(1, 3, 8, 8),
+        root_module_types=[nn.Conv2d, nn.Linear],
+    )
+
+    assert tuple(name for name, _ in tracker._get_weighted_module_entries()) == (
+        "conv",
+        "bn",
+        "fc",
+    )
+
+    structured_metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_module_names=True,
+        log_total_bops=True,
+        log_layerwise_stats=True,
+    ).track()
+    unstructured_metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_module_names=True,
+        log_total_bops=True,
+        log_layerwise_stats=True,
+    ).track()
+
+    assert structured_metrics["structured_bops_module_names"] == ("conv", "fc")
+    assert unstructured_metrics["unstructured_bops_module_names"] == ("conv", "fc")
+    assert tuple(structured_metrics["structured_bops_pr_module"]) == ("conv", "fc")
+    assert tuple(unstructured_metrics["unstructured_bops_pr_module"]) == (
+        "conv",
+        "fc",
     )
 
 

@@ -467,27 +467,29 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
     example_inputs = torch.randn(1, 3, 32, 32)
     tracker = WeightTracker(model, example_inputs)
 
-    metrics = tracker.create_tracker(
+    structured_bops = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
         log_total_bops=True,
         log_layerwise_stats=True,
-    ).track()
-    bitrates = tracker.get_calculation(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
+    )
+    metrics = structured_bops.track()
+    bitrates = structured_bops.calc(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
     by_module = _fvcore_by_module(model, example_inputs)
     actual_pr_module = metrics["structured_bops_pr_module"]
     actual_values = torch.stack(tuple(actual_pr_module.values()))
+    expected_names = tuple(actual_pr_module.keys())
+    all_entries = dict(tracker._get_weighted_module_entries())
+    expected_entries = tuple((name, all_entries[name]) for name in expected_names)
     expected = torch.tensor(
         [
             float(by_module[name]) * float(bitrates[index].prod())
-            for index, (name, _) in enumerate(tracker._get_weighted_module_entries())
+            for index, (name, _) in enumerate(expected_entries)
         ],
         dtype=actual_values.dtype,
         device=actual_values.device,
     )
 
-    assert tuple(actual_pr_module.keys()) == tuple(
-        name for name, _ in tracker._get_weighted_module_entries()
-    )
+    assert all("bn" not in name for name in expected_names)
     torch.testing.assert_close(actual_values, expected)
     torch.testing.assert_close(metrics["structured_bops"], expected.sum())
 
@@ -514,18 +516,33 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
         example_inputs=example_inputs,
         root_module_types=[nn.Conv2d, nn.Linear],
     )
-    metrics = tracker.create_tracker(
+    unstructured_bops = tracker.create_tracker(
         TrackerType.UNSTRUCTURED_BOPS,
         log_total_bops=True,
         log_layerwise_stats=True,
         log_module_names=True,
         log_compression_rate=True,
-    ).track()
-    expected = _expected_unstructured_bops_pr_module(tracker, example_inputs)
-    expected_baseline = _expected_bops_baseline_pr_module(tracker, example_inputs)
-    expected_names = tuple(name for name, _ in tracker._get_weighted_module_entries())
+    )
+    metrics = unstructured_bops.track()
+    expected_names = metrics["unstructured_bops_module_names"]
+    all_entries = dict(tracker._get_weighted_module_entries())
+    expected_entries = tuple((name, all_entries[name]) for name in expected_names)
+    bitrates = unstructured_bops.calc(CalcType.BITRATE_PR_MODULE)()
+    expected = _expected_unstructured_bops_pr_module(
+        tracker,
+        example_inputs,
+        expected_entries,
+        bitrates,
+    )
+    expected_baseline = _expected_bops_baseline_pr_module(
+        tracker,
+        example_inputs,
+        expected_entries,
+        bitrates,
+    )
 
     assert metrics["unstructured_bops_module_names"] == expected_names
+    assert all("bn" not in name for name in expected_names)
     _assert_named_tensor_values_close(
         metrics["unstructured_bops_pr_module"],
         expected_names,

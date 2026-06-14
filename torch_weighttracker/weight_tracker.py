@@ -665,12 +665,14 @@ class WeightTracker:
             TrackerType.STRUCTURED_BOPS / "structured_bops":
                 Tracks active structured bit operations from active runtime MACs
                 and per-module activation/weight bitrates. Default output
-                includes only "structured_bops_compression".
+                includes only "structured_bops_compression". Normalization
+                modules are excluded by default.
             TrackerType.UNSTRUCTURED_BOPS / "unstructured_bops":
                 Tracks active unstructured bit operations from baseline runtime
                 MACs, per-module zero-weight fractions, and per-module
                 activation/weight bitrates. Default output includes only
-                "unstructured_bops_compression".
+                "unstructured_bops_compression". Normalization modules are
+                excluded by default.
             TrackerType.L2_NORM_DISTRIBUTION / "l2_norm_distribution":
                 Tracks each canonical group's per-prune-unit L2 norm
                 distribution. Output keys use

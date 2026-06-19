@@ -17,6 +17,7 @@ from torch_weighttracker.trackers.base import BaseTracker
 
 
 class Nvidia24Sparsity(BaseTracker):
+    metric_namespace = "nvidia_2_4_sparsity"
     required_calculations = (CalcType.BLOCK_2_4_SPARSITY,)
 
     def __init__(
@@ -24,9 +25,10 @@ class Nvidia24Sparsity(BaseTracker):
         calculations=None,
         *,
         log_layerwise_stats: bool = False,
+        convert_tensors: bool = True,
         _module_names: Iterable[str] = (),
     ) -> None:
-        super().__init__(calculations=calculations)
+        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
         self.log_layerwise_stats = log_layerwise_stats
         self.module_names = tuple(_module_names)
 
@@ -87,37 +89,35 @@ class Nvidia24Sparsity(BaseTracker):
         )
 
         metrics = {
-            "nvidia_2_4_sparsity/strict_block_fraction": _safe_fraction(
+            "strict_block_fraction": _safe_fraction(
                 strict_blocks.sum(),
                 total_blocks.sum(),
             ),
-            "nvidia_2_4_sparsity/nvidia_eligible_block_fraction": _safe_fraction(
+            "nvidia_eligible_block_fraction": _safe_fraction(
                 eligible_blocks.sum(),
                 total_blocks.sum(),
             ),
-            "nvidia_2_4_sparsity/strict_layers": strict_layer_mask.sum().to(
+            "strict_layers": strict_layer_mask.sum().to(
                 dtype=result.dtype,
             ),
-            "nvidia_2_4_sparsity/nvidia_eligible_layers": (
+            "nvidia_eligible_layers": (
                 eligible_layer_mask.sum().to(dtype=result.dtype)
             ),
-            "nvidia_2_4_sparsity/total_layers": result.new_tensor(
+            "total_layers": result.new_tensor(
                 float(counts.shape[0]),
             ),
-            "nvidia_2_4_sparsity/tail_elements": tail_elements.sum(),
+            "tail_elements": tail_elements.sum(),
         }
 
         if self.log_layerwise_stats:
-            metrics.update(
-                _layerwise_metrics(
-                    self.module_names,
-                    strict_blocks,
-                    eligible_blocks,
-                    total_blocks,
-                    tail_elements,
-                    strict_layer_mask,
-                    eligible_layer_mask,
-                )
+            metrics["layers"] = _layerwise_metrics(
+                self.module_names,
+                strict_blocks,
+                eligible_blocks,
+                total_blocks,
+                tail_elements,
+                strict_layer_mask,
+                eligible_layer_mask,
             )
 
         return metrics
@@ -134,25 +134,26 @@ def _layerwise_metrics(
 ) -> dict[str, torch.Tensor]:
     metrics = {}
     for index, name in enumerate(module_names):
-        prefix = f"nvidia_2_4_sparsity/layers/{name}"
-        metrics[f"{prefix}/strict_block_fraction"] = _safe_fraction(
-            strict_blocks[index],
-            total_blocks[index],
-        )
-        metrics[f"{prefix}/nvidia_eligible_block_fraction"] = _safe_fraction(
-            eligible_blocks[index],
-            total_blocks[index],
-        )
-        metrics[f"{prefix}/strict_blocks"] = strict_blocks[index]
-        metrics[f"{prefix}/nvidia_eligible_blocks"] = eligible_blocks[index]
-        metrics[f"{prefix}/total_blocks"] = total_blocks[index]
-        metrics[f"{prefix}/tail_elements"] = tail_elements[index]
-        metrics[f"{prefix}/is_strict_layer"] = strict_layer_mask[index].to(
-            dtype=strict_blocks.dtype,
-        )
-        metrics[f"{prefix}/is_nvidia_eligible_layer"] = eligible_layer_mask[index].to(
-            dtype=strict_blocks.dtype,
-        )
+        metrics[name] = {
+            "strict_block_fraction": _safe_fraction(
+                strict_blocks[index],
+                total_blocks[index],
+            ),
+            "nvidia_eligible_block_fraction": _safe_fraction(
+                eligible_blocks[index],
+                total_blocks[index],
+            ),
+            "strict_blocks": strict_blocks[index],
+            "nvidia_eligible_blocks": eligible_blocks[index],
+            "total_blocks": total_blocks[index],
+            "tail_elements": tail_elements[index],
+            "is_strict_layer": strict_layer_mask[index].to(
+                dtype=strict_blocks.dtype,
+            ),
+            "is_nvidia_eligible_layer": eligible_layer_mask[index].to(
+                dtype=strict_blocks.dtype,
+            ),
+        }
 
     return metrics
 

@@ -194,6 +194,8 @@ def test_pipeline_calculation_propagates_gradients_through_gather_index_add() ->
 
 
 class GradModeTracker(BaseTracker):
+    metric_namespace = "grad_mode"
+
     def __init__(self) -> None:
         super().__init__()
         self.compute_grad_enabled = None
@@ -214,7 +216,7 @@ def test_tracker_track_runs_compute_and_metric_under_no_grad() -> None:
     with torch.enable_grad():
         metric = tracker.track()
 
-    assert metric["value"].item() == 1.0
+    assert metric["grad_mode"]["value"] == 1.0
     assert tracker.compute_grad_enabled is False
     assert tracker.metric_grad_enabled is False
 

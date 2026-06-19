@@ -15,16 +15,18 @@ from torch_weighttracker.trackers.group_names import group_names
 
 
 class L2NormDistribution(BaseTracker):
+    metric_namespace = "l2_norm_distribution"
     required_calculations = (CalcType.L2_NORM_PR_UNIT,)
 
     def __init__(
         self,
         calculations=None,
         *,
+        convert_tensors: bool = True,
         _group_names: Iterable[str] = (),
         _group_slices: Iterable[tuple[int, int]] = (),
     ) -> None:
-        super().__init__(calculations=calculations)
+        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
         self.group_names = tuple(_group_names)
         self.group_slices = tuple(_group_slices)
 
@@ -59,7 +61,7 @@ class L2NormDistribution(BaseTracker):
         groups = owner.canonical_groups if context is None else context.canonical_groups
         return {
             **kwargs,
-            "_group_names": group_names(owner, owner.canonical_groups),
+            "_group_names": group_names(owner, groups),
             "_group_slices": tuple(
                 (int(group.offset), int(group.length)) for group in groups
             ),
@@ -70,10 +72,12 @@ class L2NormDistribution(BaseTracker):
 
     def toMetric(self, result: torch.Tensor):
         return {
-            f"l2_norm_distribution/{name}": result.narrow(0, start, length)
-            for name, (start, length) in zip(
-                self.group_names,
-                self.group_slices,
-                strict=True,
-            )
+            "groups": {
+                name: result.narrow(0, start, length)
+                for name, (start, length) in zip(
+                    self.group_names,
+                    self.group_slices,
+                    strict=True,
+                )
+            }
         }

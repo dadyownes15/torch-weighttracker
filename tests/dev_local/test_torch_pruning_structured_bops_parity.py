@@ -444,8 +444,9 @@ def _tracker_snapshot(
         log_module_names=True,
         log_layerwise_stats=True,
         log_compression_rate=True,
+        convert_tensors=False,
     )
-    metrics = structured_bops.track()
+    metrics = structured_bops.track()["structured_bops"]
     active_macs_calc = structured_bops.calc(CalcType.ACTIVE_MACS_PR_MODULE)
     active_units = active_macs_calc.calc(CalcType.UNIT_ACTIVE_MASK)()
     baseline_axes = active_macs_calc.calc(CalcType.BASELINE_MODULE_AXES)()
@@ -454,7 +455,7 @@ def _tracker_snapshot(
     ).view_as(baseline_axes)
 
     return TrackerSnapshot(
-        module_names=tuple(metrics["structured_bops_module_names"]),
+        module_names=tuple(metrics["module_names"]),
         active_macs=active_macs_calc(),
         baseline_macs=active_macs_calc.calc(CalcType.BASELINE_MACS_PR_MODULE)(),
         active_axes=baseline_axes + axis_delta,
@@ -551,25 +552,33 @@ def _assert_matches_torch_pruning_scope(
     torch.testing.assert_close(snapshot.active_macs, expected_active_macs)
     torch.testing.assert_close(snapshot.baseline_macs, expected_baseline_macs)
     torch.testing.assert_close(
-        torch.stack(tuple(snapshot.metrics["structured_bops_pr_module"].values())),
+        torch.stack(
+            tuple(
+                module_metrics["bops"]
+                for module_metrics in snapshot.metrics["modules"].values()
+            )
+        ),
         expected_active_bops,
     )
     torch.testing.assert_close(
-        snapshot.metrics["structured_bops"],
+        snapshot.metrics["bops"],
         expected_active_bops.sum(),
     )
     torch.testing.assert_close(
         torch.stack(
-            tuple(snapshot.metrics["structured_bops_baseline_pr_module"].values())
+            tuple(
+                module_metrics["baseline"]
+                for module_metrics in snapshot.metrics["modules"].values()
+            )
         ),
         expected_baseline_bops,
     )
     torch.testing.assert_close(
-        snapshot.metrics["structured_bops_baseline"],
+        snapshot.metrics["baseline"],
         expected_baseline_bops.sum(),
     )
     torch.testing.assert_close(
-        snapshot.metrics["structured_bops_compression"],
+        snapshot.metrics["compression"],
         1.0 - expected_active_bops.sum() / expected_baseline_bops.sum(),
     )
     torch.testing.assert_close(

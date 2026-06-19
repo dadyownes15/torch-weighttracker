@@ -15,6 +15,7 @@ from torch_weighttracker.trackers.group_names import group_names
 
 
 class GroupPruningSummary(BaseTracker):
+    metric_namespace = "group_pruning_summary"
     required_calculations = (
         CalcType.UNIT_ACTIVE_MASK,
         CalcType.UNITS_TO_GROUP,
@@ -27,9 +28,10 @@ class GroupPruningSummary(BaseTracker):
         self,
         calculations=None,
         *,
+        convert_tensors: bool = True,
         _group_names: Iterable[str] = (),
     ) -> None:
-        super().__init__(calculations=calculations)
+        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
         self.group_names = tuple(_group_names)
 
     @classmethod
@@ -93,8 +95,9 @@ class GroupPruningSummary(BaseTracker):
     def toMetric(self, result: tuple[torch.Tensor, torch.Tensor]):
         pruned_units, pruned_params = result
         metrics = {
-            "group_pruning/pruned_units": pruned_units.sum(),
-            "group_pruning/pruned_params": pruned_params.sum(),
+            "pruned_units": pruned_units.sum(),
+            "pruned_params": pruned_params.sum(),
+            "groups": {},
         }
 
         for name, units, params in zip(
@@ -103,7 +106,9 @@ class GroupPruningSummary(BaseTracker):
             pruned_params,
             strict=True,
         ):
-            metrics[f"group_pruning/groups/{name}/pruned_units"] = units
-            metrics[f"group_pruning/groups/{name}/pruned_params"] = params
+            metrics["groups"][name] = {
+                "pruned_units": units,
+                "pruned_params": params,
+            }
 
         return metrics

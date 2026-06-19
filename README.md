@@ -228,7 +228,7 @@ metrics = tracker.create_tracker(
     include=[model.layer3, model.layer4],
 ).track()
 
-print(metrics["structured_bops_compression"])
+print(metrics["structured_bops"]["compression"])
 
 raw_metrics = tracker.create_tracker(
     TrackerType.STRUCTURED_BOPS,
@@ -237,9 +237,9 @@ raw_metrics = tracker.create_tracker(
     log_layerwise_stats=True,
 ).track()
 
-print(raw_metrics["structured_bops"])
-print(raw_metrics["structured_bops_pr_module"])
-print(raw_metrics["structured_bops_compression_rate_pr_module"])
+structured = raw_metrics["structured_bops"]
+print(structured["bops"])
+print(structured["modules"])
 ```
 
 `create_tracker` accepts a single `TrackerType`/string or a list of tracker
@@ -251,6 +251,10 @@ tracker.create_tracker(
 )
 metrics = tracker.track()
 ```
+
+Tracker metrics are nested by tracker name and convert tensor values to Python
+numbers/lists by default. Pass `convert_tensors=False` to preserve tensors in
+the returned metrics.
 
 #### Formulation of the Structured BOPs Metric
 
@@ -350,8 +354,9 @@ metrics = tracker.create_tracker(
     ignore=[torch.nn.BatchNorm2d],
 ).track()
 
-print(metrics["unstructured_sparsity"])
-print(metrics["layers"])
+sparsity = metrics["unstructured_sparsity"]
+print(sparsity["sparsity"])
+print(sparsity["layers"])
 ```
 
 Values are fractions in `[0, 1]`. Parametrized fake quantization is measured
@@ -373,7 +378,7 @@ metrics = tracker.create_tracker(
     include=[model.layer3, model.layer4],
 ).track()
 
-print(metrics["unstructured_bops_compression"])
+print(metrics["unstructured_bops"]["compression"])
 
 raw_metrics = tracker.create_tracker(
     TrackerType.UNSTRUCTURED_BOPS,
@@ -382,9 +387,9 @@ raw_metrics = tracker.create_tracker(
     log_layerwise_stats=True,
 ).track()
 
-print(raw_metrics["unstructured_bops"])
-print(raw_metrics["unstructured_bops_pr_module"])
-print(raw_metrics["unstructured_bops_compression_rate_pr_module"])
+unstructured = raw_metrics["unstructured_bops"]
+print(unstructured["bops"])
+print(unstructured["modules"])
 ```
 
 For each weighted module $m$:
@@ -428,9 +433,10 @@ metrics = tracker.create_tracker(
     log_layerwise_stats=True,
 ).track()
 
-print(metrics["nvidia_2_4_sparsity/strict_block_fraction"])
-print(metrics["nvidia_2_4_sparsity/nvidia_eligible_block_fraction"])
-print(metrics["nvidia_2_4_sparsity/tail_elements"])
+nvidia_24 = metrics["nvidia_2_4_sparsity"]
+print(nvidia_24["strict_block_fraction"])
+print(nvidia_24["nvidia_eligible_block_fraction"])
+print(nvidia_24["tail_elements"])
 ```
 
 The strict fraction counts complete 4-value blocks with exactly two zeros. The
@@ -441,8 +447,7 @@ layer from counting as strict or eligible.
 ## Group Pruning Summary
 
 Group pruning summary reports pruned canonical units and group-attributed
-pruned parameters as flat scalar keys that can be passed directly to loggers
-such as W&B:
+pruned parameters in a nested tracker metrics dictionary:
 
 ```python
 import torch
@@ -455,13 +460,14 @@ metrics = tracker.create_tracker(
     ignore=[torch.nn.BatchNorm2d],
 ).track()
 
-print(metrics["group_pruning/pruned_units"])
-print(metrics["group_pruning/pruned_params"])
+summary = metrics["group_pruning_summary"]
+print(summary["pruned_units"])
+print(summary["pruned_params"])
 ```
 
-Per-group values are emitted under keys such as
-`group_pruning/groups/layer3.0.conv1:prune_out_channels/pruned_units` and
-`group_pruning/groups/layer3.0.conv1:prune_out_channels/pruned_params`.
+Per-group values are emitted under
+`summary["groups"]["layer3.0.conv1:prune_out_channels"]["pruned_units"]`
+and the corresponding `"pruned_params"` key.
 
 ## Architecture
 

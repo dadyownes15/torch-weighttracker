@@ -54,6 +54,7 @@ def normalize_tracker_types(tracker_type: TrackerTypeSpec) -> tuple[TrackerType,
 
 class BaseTracker(nn.Module, ABC):
     required_calculations: tuple[CalcType, ...] = ()
+    metric_namespace: str = ""
 
     @classmethod
     def calculation_context(
@@ -79,9 +80,12 @@ class BaseTracker(nn.Module, ABC):
     def __init__(
         self,
         calculations: Mapping[CalcType, nn.Module] | None = None,
+        *,
+        convert_tensors: bool = True,
     ) -> None:
         super().__init__()
         calculations = {} if calculations is None else calculations
+        self.convert_tensors = convert_tensors
 
         missing = [
             calc_type
@@ -110,7 +114,17 @@ class BaseTracker(nn.Module, ABC):
 
     def track(self):
         with torch.no_grad():
-            return self.toMetric(self.compute())
+            metrics = self.toMetric(self.compute())
+
+        if not self.metric_namespace:
+            raise ValueError(
+                f"{self.__class__.__name__} must define metric_namespace."
+            )
+
+        if self.convert_tensors:
+            metrics = _convert_metric_value(metrics)
+
+        return {self.metric_namespace: metrics}
 
     def calc(self, calc_type: CalcType | str) -> nn.Module:
         calc_type = CalcType(calc_type)
@@ -123,6 +137,20 @@ class BaseTracker(nn.Module, ABC):
         **kwargs,
     ) -> torch.Tensor:
         return self.calc(calc_type)(*args, **kwargs)
+
+
+def _convert_metric_value(value):
+    if isinstance(value, torch.Tensor):
+        value = value.detach().cpu()
+        return value.item() if value.ndim == 0 else value.tolist()
+
+    if isinstance(value, Mapping):
+        return {str(key): _convert_metric_value(item) for key, item in value.items()}
+
+    if isinstance(value, (list, tuple)):
+        return [_convert_metric_value(item) for item in value]
+
+    return value
 
 
 def tracker_class_for_type(tracker_type: TrackerTypeInput):

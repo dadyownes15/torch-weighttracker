@@ -665,37 +665,33 @@ class WeightTracker:
             TrackerType.STRUCTURED_BOPS / "structured_bops":
                 Tracks active structured bit operations from active runtime MACs
                 and per-module activation/weight bitrates. Default output
-                includes only "structured_bops_compression". Normalization
-                modules are excluded by default.
+                is {"structured_bops": {"compression": float}}.
+                Normalization modules are excluded by default.
             TrackerType.UNSTRUCTURED_BOPS / "unstructured_bops":
                 Tracks active unstructured bit operations from baseline runtime
                 MACs, per-module zero-weight fractions, and per-module
-                activation/weight bitrates. Default output includes only
-                "unstructured_bops_compression". Normalization modules are
-                excluded by default.
+                activation/weight bitrates. Default output is
+                {"unstructured_bops": {"compression": float}}.
+                Normalization modules are excluded by default.
             TrackerType.L2_NORM_DISTRIBUTION / "l2_norm_distribution":
                 Tracks each canonical group's per-prune-unit L2 norm
-                distribution. Output keys use
-                "l2_norm_distribution/<group_name>".
+                distribution. Output is
+                {"l2_norm_distribution": {"groups": {group_name: [...]}}}.
             TrackerType.UNSTRUCTURED_SPARSITY / "unstructured_sparsity":
                 Tracks exact zero-weight sparsity as a global weighted fraction
-                plus per-layer fractions. Output includes
-                "unstructured_sparsity" and "layers".
+                plus per-layer fractions. Output includes "sparsity" and
+                "layers" under the "unstructured_sparsity" namespace.
             TrackerType.NVIDIA_2_4_SPARSITY / "nvidia_2_4_sparsity":
                 Tracks strict NVIDIA 2:4 sparsity over contiguous groups of
-                four weights along each supported layer's reduction axis.
-                Output includes
-                "nvidia_2_4_sparsity/strict_block_fraction",
-                "nvidia_2_4_sparsity/nvidia_eligible_block_fraction",
-                "nvidia_2_4_sparsity/strict_layers",
-                "nvidia_2_4_sparsity/nvidia_eligible_layers",
-                "nvidia_2_4_sparsity/total_layers", and
-                "nvidia_2_4_sparsity/tail_elements".
+                four weights along each supported layer's reduction axis. Output
+                includes "strict_block_fraction",
+                "nvidia_eligible_block_fraction", "strict_layers",
+                "nvidia_eligible_layers", "total_layers", and "tail_elements"
+                under the "nvidia_2_4_sparsity" namespace.
             TrackerType.GROUP_PRUNING_SUMMARY / "group_pruning_summary":
-                Tracks flat W&B-friendly pruned unit and group-attributed
-                pruned parameter counts. Output includes
-                "group_pruning/pruned_units", "group_pruning/pruned_params",
-                and per-group scalar keys under "group_pruning/groups/".
+                Tracks pruned unit and group-attributed pruned parameter
+                counts. Output includes "pruned_units", "pruned_params", and
+                "groups" under the "group_pruning_summary" namespace.
 
         Args:
             tracker_type: The tracker type enum or string value to create, or
@@ -716,46 +712,41 @@ class WeightTracker:
             **kwargs: Tracker-specific options. When creating multiple
                 trackers, kwargs are passed to each tracker. Unsupported kwargs
                 raise TypeError from the tracker constructor.
+                All trackers accept convert_tensors, which defaults to True and
+                converts tensor metric values to Python scalars/lists. Set
+                convert_tensors=False to preserve tensors.
 
         StructuredBOPs kwargs:
             log_total_bops (bool): Include active and baseline structured BOP
-                totals. When log_layerwise_stats=True, also include
-                per-module BOP dictionaries. Default: False.
-            log_module_names (bool): Include "structured_bops_module_names",
-                aligned with per-module metric dictionaries. Default: False.
+                totals as "bops" and "baseline". When
+                log_layerwise_stats=True, also include per-module values under
+                "modules". Default: False.
+            log_module_names (bool): Include "module_names", aligned with
+                "modules". Default: False.
             log_layerwise_stats (bool): Include per-module StructuredBOPs
-                metric dictionaries. Adds
-                "structured_bops_compression_rate_pr_module"; when
-                log_total_bops=True, also adds "structured_bops_pr_module" and
-                "structured_bops_baseline_pr_module". Default: False.
-            log_compression_rate (bool): Include the legacy
-                "structured_bops_compression_rate" alias, computed as
-                1 - structured_bops / structured_bops_baseline in this
-                tracker's calculation context. The baseline currently uses
-                hard-coded 32-bit activation and weight bitrates. Default:
-                False.
+                values under "modules/<module_name>/compression_rate"; when
+                log_total_bops=True, also adds "bops" and "baseline" there.
+                Default: False.
+            log_compression_rate (bool): Include the "compression_rate" alias,
+                matching "compression". Default: False.
 
         UnstructuredBOPs kwargs:
             log_total_bops (bool): Include active and baseline unstructured BOP
-                totals. When log_layerwise_stats=True, also include
-                per-module BOP dictionaries. Default: False.
-            log_module_names (bool): Include "unstructured_bops_module_names",
-                aligned with per-module metric dictionaries. Default: False.
+                totals as "bops" and "baseline". When
+                log_layerwise_stats=True, also include per-module values under
+                "modules". Default: False.
+            log_module_names (bool): Include "module_names", aligned with
+                "modules". Default: False.
             log_layerwise_stats (bool): Include per-module UnstructuredBOPs
-                metric dictionaries. Adds
-                "unstructured_bops_compression_rate_pr_module"; when
-                log_total_bops=True, also adds "unstructured_bops_pr_module"
-                and "unstructured_bops_baseline_pr_module". Default: False.
-            log_compression_rate (bool): Include the
-                "unstructured_bops_compression_rate" alias, computed as
-                1 - unstructured_bops / unstructured_bops_baseline in this
-                tracker's calculation context. The baseline currently uses
-                hard-coded 32-bit activation and weight bitrates. Default:
-                False.
+                values under "modules/<module_name>/compression_rate"; when
+                log_total_bops=True, also adds "bops" and "baseline" there.
+                Default: False.
+            log_compression_rate (bool): Include the "compression_rate" alias,
+                matching "compression". Default: False.
 
         UnstructuredSparsity output:
-            "unstructured_sparsity": Global zero-weight fraction, computed as
-                total zero weight elements divided by total weight elements.
+            "sparsity": Global zero-weight fraction, computed as total zero
+                weight elements divided by total weight elements.
             "layers": A dict mapping module names to per-module zero-weight
                 fractions.
 
@@ -763,36 +754,18 @@ class WeightTracker:
         tracker-specific kwargs.
 
         Nvidia24Sparsity kwargs:
-            log_layerwise_stats (bool): Include flat per-module metrics under
-                "nvidia_2_4_sparsity/layers/<module_name>/...". Default:
-                False.
+            log_layerwise_stats (bool): Include per-module metrics under
+                "layers". Default: False.
 
         Nvidia24Sparsity output:
-            "nvidia_2_4_sparsity/strict_block_fraction": Fraction of complete
-                4-value blocks with exactly two zeros.
-            "nvidia_2_4_sparsity/nvidia_eligible_block_fraction": Fraction of
-                complete 4-value blocks with at least two zeros, matching
-                NVIDIA/TensorRT eligibility.
-            "nvidia_2_4_sparsity/strict_layers": Number of supported layers
-                whose complete blocks are all strict and that have no tail
-                elements.
-            "nvidia_2_4_sparsity/nvidia_eligible_layers": Number of supported
-                layers whose complete blocks are all NVIDIA-eligible and that
-                have no tail elements.
-            "nvidia_2_4_sparsity/total_layers": Number of supported measured
-                layers. Supported layers are Linear, Conv1d/2d/3d, and
-                MultiheadAttention projection weights.
-            "nvidia_2_4_sparsity/tail_elements": Count of reduction-axis
-                elements not covered by complete 4-value blocks.
+            "strict_block_fraction", "nvidia_eligible_block_fraction",
+            "strict_layers", "nvidia_eligible_layers", "total_layers", and
+            "tail_elements".
 
         GroupPruningSummary output:
-            "group_pruning/pruned_units": Total pruned canonical units.
-            "group_pruning/pruned_params": Total group-attributed pruned
-                parameter footprint.
-            "group_pruning/groups/<group_name>/pruned_units": Per-group pruned
-                canonical unit count.
-            "group_pruning/groups/<group_name>/pruned_params": Per-group
-                group-attributed pruned parameter footprint.
+            "pruned_units": Total pruned canonical units.
+            "pruned_params": Total group-attributed pruned parameter footprint.
+            "groups": Per-group pruned unit and parameter counts.
         """
         is_collection = is_tracker_type_collection(tracker_type)
         tracker_types = normalize_tracker_types(tracker_type)

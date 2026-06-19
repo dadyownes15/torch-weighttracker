@@ -459,6 +459,14 @@ def _assert_named_tensor_values_close(
     torch.testing.assert_close(torch.stack(tuple(actual.values())), expected_values)
 
 
+def _module_metric(metrics: dict, key: str) -> dict[str, torch.Tensor]:
+    return {
+        module_name: module_metrics[key]
+        for module_name, module_metrics in metrics["modules"].items()
+        if key in module_metrics
+    }
+
+
 def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None:
     model = TinyResNetClassifier().eval()
     model.stem_conv.activation_bitrate = 8
@@ -471,11 +479,12 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
         TrackerType.STRUCTURED_BOPS,
         log_total_bops=True,
         log_layerwise_stats=True,
+        convert_tensors=False,
     )
-    metrics = structured_bops.track()
+    metrics = structured_bops.track()["structured_bops"]
     bitrates = structured_bops.calc(CalcType.BITRATE_PR_MODULE)().view(-1, 2)
     by_module = _fvcore_by_module(model, example_inputs)
-    actual_pr_module = metrics["structured_bops_pr_module"]
+    actual_pr_module = _module_metric(metrics, "bops")
     actual_values = torch.stack(tuple(actual_pr_module.values()))
     expected_names = tuple(actual_pr_module.keys())
     all_entries = dict(tracker._get_weighted_module_entries())
@@ -491,7 +500,7 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
 
     assert all("bn" not in name for name in expected_names)
     torch.testing.assert_close(actual_values, expected)
-    torch.testing.assert_close(metrics["structured_bops"], expected.sum())
+    torch.testing.assert_close(metrics["bops"], expected.sum())
 
 
 def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
@@ -522,9 +531,10 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
         log_layerwise_stats=True,
         log_module_names=True,
         log_compression_rate=True,
+        convert_tensors=False,
     )
-    metrics = unstructured_bops.track()
-    expected_names = metrics["unstructured_bops_module_names"]
+    metrics = unstructured_bops.track()["unstructured_bops"]
+    expected_names = metrics["module_names"]
     all_entries = dict(tracker._get_weighted_module_entries())
     expected_entries = tuple((name, all_entries[name]) for name in expected_names)
     bitrates = unstructured_bops.calc(CalcType.BITRATE_PR_MODULE)()
@@ -541,30 +551,30 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
         bitrates,
     )
 
-    assert metrics["unstructured_bops_module_names"] == expected_names
+    assert metrics["module_names"] == expected_names
     assert all("bn" not in name for name in expected_names)
     _assert_named_tensor_values_close(
-        metrics["unstructured_bops_pr_module"],
+        _module_metric(metrics, "bops"),
         expected_names,
         expected,
     )
     _assert_named_tensor_values_close(
-        metrics["unstructured_bops_baseline_pr_module"],
+        _module_metric(metrics, "baseline"),
         expected_names,
         expected_baseline,
     )
-    torch.testing.assert_close(metrics["unstructured_bops"], expected.sum())
+    torch.testing.assert_close(metrics["bops"], expected.sum())
     torch.testing.assert_close(
-        metrics["unstructured_bops_baseline"],
+        metrics["baseline"],
         expected_baseline.sum(),
     )
     torch.testing.assert_close(
-        metrics["unstructured_bops_compression"],
+        metrics["compression"],
         1.0 - expected.sum() / expected_baseline.sum(),
     )
     torch.testing.assert_close(
-        metrics["unstructured_bops_compression_rate"],
-        metrics["unstructured_bops_compression"],
+        metrics["compression_rate"],
+        metrics["compression"],
     )
 
 
@@ -603,9 +613,10 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_transformer() -> Non
         log_layerwise_stats=True,
         log_module_names=True,
         log_compression_rate=True,
+        convert_tensors=False,
     )
-    metrics = unstructured_bops.track()
-    expected_names = metrics["unstructured_bops_module_names"]
+    metrics = unstructured_bops.track()["unstructured_bops"]
+    expected_names = metrics["module_names"]
     all_entries = dict(tracker._get_weighted_module_entries())
     expected_entries = tuple((name, all_entries[name]) for name in expected_names)
     bitrates = unstructured_bops.calc(CalcType.BITRATE_PR_MODULE)()
@@ -622,29 +633,29 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_transformer() -> Non
         bitrates,
     )
 
-    assert metrics["unstructured_bops_module_names"] == expected_names
+    assert metrics["module_names"] == expected_names
     _assert_named_tensor_values_close(
-        metrics["unstructured_bops_pr_module"],
+        _module_metric(metrics, "bops"),
         expected_names,
         expected,
     )
     _assert_named_tensor_values_close(
-        metrics["unstructured_bops_baseline_pr_module"],
+        _module_metric(metrics, "baseline"),
         expected_names,
         expected_baseline,
     )
-    torch.testing.assert_close(metrics["unstructured_bops"], expected.sum())
+    torch.testing.assert_close(metrics["bops"], expected.sum())
     torch.testing.assert_close(
-        metrics["unstructured_bops_baseline"],
+        metrics["baseline"],
         expected_baseline.sum(),
     )
     torch.testing.assert_close(
-        metrics["unstructured_bops_compression"],
+        metrics["compression"],
         1.0 - expected.sum() / expected_baseline.sum(),
     )
     torch.testing.assert_close(
-        metrics["unstructured_bops_compression_rate"],
-        metrics["unstructured_bops_compression"],
+        metrics["compression_rate"],
+        metrics["compression"],
     )
 
 

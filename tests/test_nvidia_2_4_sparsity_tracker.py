@@ -41,11 +41,12 @@ def _linear_with_weight(weight: torch.Tensor) -> nn.Sequential:
 
 
 def _track(model: nn.Module, **kwargs):
+    kwargs.setdefault("convert_tensors", False)
     return (
         WeightTracker(model)
         .create_tracker(TrackerType.NVIDIA_2_4_SPARSITY, **kwargs)
         .track()
-    )
+    )["nvidia_2_4_sparsity"]
 
 
 def test_nvidia_2_4_calculation_counts_linear_exact_two_zero_blocks() -> None:
@@ -69,19 +70,19 @@ def test_nvidia_2_4_tracker_distinguishes_eligible_from_strict_blocks() -> None:
     metrics = _track(model)
 
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/strict_block_fraction"],
+        metrics["strict_block_fraction"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/nvidia_eligible_block_fraction"],
+        metrics["nvidia_eligible_block_fraction"],
         torch.tensor(1.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/strict_layers"],
+        metrics["strict_layers"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/nvidia_eligible_layers"],
+        metrics["nvidia_eligible_layers"],
         torch.tensor(1.0),
     )
 
@@ -92,15 +93,15 @@ def test_nvidia_2_4_tracker_counts_invalid_blocks() -> None:
     metrics = _track(model)
 
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/strict_block_fraction"],
+        metrics["strict_block_fraction"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/nvidia_eligible_block_fraction"],
+        metrics["nvidia_eligible_block_fraction"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/total_layers"],
+        metrics["total_layers"],
         torch.tensor(1.0),
     )
 
@@ -111,23 +112,23 @@ def test_nvidia_2_4_tails_are_reported_and_make_layer_non_strict() -> None:
     metrics = _track(model)
 
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/strict_block_fraction"],
+        metrics["strict_block_fraction"],
         torch.tensor(1.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/nvidia_eligible_block_fraction"],
+        metrics["nvidia_eligible_block_fraction"],
         torch.tensor(1.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/strict_layers"],
+        metrics["strict_layers"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/nvidia_eligible_layers"],
+        metrics["nvidia_eligible_layers"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/tail_elements"],
+        metrics["tail_elements"],
         torch.tensor(2.0),
     )
 
@@ -148,14 +149,14 @@ def test_nvidia_2_4_tracker_is_registered_and_accepts_string_name() -> None:
     model = _linear_with_weight(torch.tensor([[0.0, 0.0, 1.0, 2.0]]))
     tracker = WeightTracker(model)
 
-    created = tracker.create_tracker("nvidia_2_4_sparsity")
+    created = tracker.create_tracker("nvidia_2_4_sparsity", convert_tensors=False)
 
     assert CalcType.BLOCK_2_4_SPARSITY.value == "2_4_block_sparsity"
     assert TrackerType.NVIDIA_2_4_SPARSITY.value == "nvidia_2_4_sparsity"
     assert tracker_class_for_type("nvidia_2_4_sparsity") is Nvidia24Sparsity
     assert created.required_calculations == (CalcType.BLOCK_2_4_SPARSITY,)
     torch.testing.assert_close(
-        created.track()["nvidia_2_4_sparsity/strict_block_fraction"],
+        created.track()["nvidia_2_4_sparsity"]["strict_block_fraction"],
         torch.tensor(1.0),
     )
 
@@ -178,24 +179,26 @@ def test_nvidia_2_4_include_and_ignore_filter_supported_layers() -> None:
         TrackerType.NVIDIA_2_4_SPARSITY,
         include=[model.fc1],
         log_layerwise_stats=True,
-    ).track()
+        convert_tensors=False,
+    ).track()["nvidia_2_4_sparsity"]
     ignored = tracker.create_tracker(
         TrackerType.NVIDIA_2_4_SPARSITY,
         ignore=[model.fc2],
         log_layerwise_stats=True,
-    ).track()
+        convert_tensors=False,
+    ).track()["nvidia_2_4_sparsity"]
 
     for metrics in (included, ignored):
         torch.testing.assert_close(
-            metrics["nvidia_2_4_sparsity/strict_block_fraction"],
+            metrics["strict_block_fraction"],
             torch.tensor(1.0),
         )
         torch.testing.assert_close(
-            metrics["nvidia_2_4_sparsity/strict_layers"],
+            metrics["strict_layers"],
             torch.tensor(1.0),
         )
-        assert "nvidia_2_4_sparsity/layers/fc1/strict_block_fraction" in metrics
-        assert "nvidia_2_4_sparsity/layers/fc2/strict_block_fraction" not in metrics
+        assert "fc1" in metrics["layers"]
+        assert "fc2" not in metrics["layers"]
 
 
 def test_nvidia_2_4_layerwise_metrics_are_flat_and_opt_in() -> None:
@@ -212,38 +215,42 @@ def test_nvidia_2_4_layerwise_metrics_are_flat_and_opt_in() -> None:
         model.fc2.weight.copy_(torch.tensor([[0.0, 0.0, 0.0, 1.0]]))
     tracker = WeightTracker(model)
 
-    default_metrics = tracker.create_tracker(TrackerType.NVIDIA_2_4_SPARSITY).track()
+    default_metrics = tracker.create_tracker(
+        TrackerType.NVIDIA_2_4_SPARSITY,
+        convert_tensors=False,
+    ).track()["nvidia_2_4_sparsity"]
     layerwise = tracker.create_tracker(
         TrackerType.NVIDIA_2_4_SPARSITY,
         log_layerwise_stats=True,
-    ).track()
+        convert_tensors=False,
+    ).track()["nvidia_2_4_sparsity"]
 
     assert set(default_metrics) == {
-        "nvidia_2_4_sparsity/strict_block_fraction",
-        "nvidia_2_4_sparsity/nvidia_eligible_block_fraction",
-        "nvidia_2_4_sparsity/strict_layers",
-        "nvidia_2_4_sparsity/nvidia_eligible_layers",
-        "nvidia_2_4_sparsity/total_layers",
-        "nvidia_2_4_sparsity/tail_elements",
+        "strict_block_fraction",
+        "nvidia_eligible_block_fraction",
+        "strict_layers",
+        "nvidia_eligible_layers",
+        "total_layers",
+        "tail_elements",
     }
     torch.testing.assert_close(
-        layerwise["nvidia_2_4_sparsity/layers/fc1/strict_block_fraction"],
+        layerwise["layers"]["fc1"]["strict_block_fraction"],
         torch.tensor(1.0),
     )
     torch.testing.assert_close(
-        layerwise["nvidia_2_4_sparsity/layers/fc2/strict_block_fraction"],
+        layerwise["layers"]["fc2"]["strict_block_fraction"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        layerwise["nvidia_2_4_sparsity/layers/fc2/nvidia_eligible_block_fraction"],
+        layerwise["layers"]["fc2"]["nvidia_eligible_block_fraction"],
         torch.tensor(1.0),
     )
     torch.testing.assert_close(
-        layerwise["nvidia_2_4_sparsity/layers/fc2/is_strict_layer"],
+        layerwise["layers"]["fc2"]["is_strict_layer"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        layerwise["nvidia_2_4_sparsity/layers/fc2/is_nvidia_eligible_layer"],
+        layerwise["layers"]["fc2"]["is_nvidia_eligible_layer"],
         torch.tensor(1.0),
     )
 
@@ -255,11 +262,11 @@ def test_nvidia_2_4_reads_effective_parametrized_weight() -> None:
     metrics = _track(model)
 
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/strict_block_fraction"],
+        metrics["strict_block_fraction"],
         torch.tensor(1.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/strict_layers"],
+        metrics["strict_layers"],
         torch.tensor(1.0),
     )
 
@@ -272,12 +279,12 @@ def test_nvidia_2_4_excludes_unsupported_weighted_modules() -> None:
     metrics = _track(model, log_layerwise_stats=True)
 
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/total_layers"],
+        metrics["total_layers"],
         torch.tensor(1.0),
     )
-    assert "nvidia_2_4_sparsity/layers/0/strict_block_fraction" not in metrics
+    assert "0" not in metrics["layers"]
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/layers/1/strict_block_fraction"],
+        metrics["layers"]["1"]["strict_block_fraction"],
         torch.tensor(1.0),
     )
 
@@ -295,14 +302,14 @@ def test_nvidia_2_4_counts_multihead_attention_projection_weights() -> None:
     )
 
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/strict_block_fraction"],
+        metrics["strict_block_fraction"],
         torch.tensor(0.0),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/nvidia_eligible_block_fraction"],
+        metrics["nvidia_eligible_block_fraction"],
         torch.tensor(0.5),
     )
     torch.testing.assert_close(
-        metrics["nvidia_2_4_sparsity/total_layers"],
+        metrics["total_layers"],
         torch.tensor(1.0),
     )

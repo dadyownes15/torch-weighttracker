@@ -238,34 +238,40 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
         "structured_bops",
         log_total_bops=True,
         log_layerwise_stats=True,
+        convert_tensors=False,
     )
-    metrics = structured_bops.track()
-    assert metrics["structured_bops_pr_module"].keys() == {"qkv", "proj"}
+    metrics = structured_bops.track()["structured_bops"]
+    assert metrics["modules"].keys() == {"qkv", "proj"}
     torch.testing.assert_close(
-        metrics["structured_bops_pr_module"]["qkv"],
+        metrics["modules"]["qkv"]["bops"],
         torch.tensor(24.0),
     )
     torch.testing.assert_close(
-        metrics["structured_bops_pr_module"]["proj"],
+        metrics["modules"]["proj"]["bops"],
         torch.tensor(8.0),
     )
     torch.testing.assert_close(
-        metrics["structured_bops_compression_rate_pr_module"]["qkv"],
+        metrics["modules"]["qkv"]["compression_rate"],
         torch.tensor(1.0 - 24.0 / (48.0 * 32.0 * 32.0)),
     )
     torch.testing.assert_close(
-        metrics["structured_bops_compression_rate_pr_module"]["proj"],
+        metrics["modules"]["proj"]["compression_rate"],
         torch.tensor(1.0 - 8.0 / (16.0 * 32.0 * 32.0)),
     )
     torch.testing.assert_close(
-        metrics["structured_bops_compression"],
+        metrics["compression"],
         torch.tensor(1.0 - 32.0 / (64.0 * 32.0 * 32.0)),
     )
     torch.testing.assert_close(
-        torch.stack(tuple(metrics["structured_bops_pr_module"].values())),
+        torch.stack(
+            tuple(
+                module_metrics["bops"]
+                for module_metrics in metrics["modules"].values()
+            )
+        ),
         torch.tensor([24.0, 8.0]),
     )
-    torch.testing.assert_close(metrics["structured_bops"], torch.tensor(32.0))
+    torch.testing.assert_close(metrics["bops"], torch.tensor(32.0))
 
 
 def test_feature_only_module_axis_plan_uses_output_cost_axis() -> None:

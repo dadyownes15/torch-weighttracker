@@ -14,13 +14,14 @@ from torch_weighttracker.trackers.bops_filter import (
     filter_bops_weighted_modules,
 )
 from torch_weighttracker.trackers.structured_bops import (
+    _add_module_metric,
     _compression_rate,
-    _named_tensor_values,
 )
 from torch_weighttracker.trackers.unstructured_sparsity import _safe_fraction
 
 
 class UnstructuredBOPs(BaseTracker):
+    metric_namespace = "unstructured_bops"
     required_calculations = (
         CalcType.UNSTRUCTURED_SPARSITY_PR_MODULE,
         CalcType.BASELINE_MACS_PR_MODULE,
@@ -35,9 +36,10 @@ class UnstructuredBOPs(BaseTracker):
         log_compression_rate: bool = False,
         log_total_bops: bool = False,
         log_layerwise_stats: bool = False,
+        convert_tensors: bool = True,
         _module_names: Iterable[str] = (),
     ) -> None:
-        super().__init__(calculations=calculations)
+        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
         self.log_module_names = log_module_names
         self.log_compression_rate = log_compression_rate
         self.log_total_bops = log_total_bops
@@ -97,43 +99,43 @@ class UnstructuredBOPs(BaseTracker):
         compression_pr_module = _compression_rate(result, baseline)
 
         metrics = {
-            "unstructured_bops_compression": compression,
+            "compression": compression,
         }
 
         if self.log_module_names:
-            metrics["unstructured_bops_module_names"] = self.module_names
+            metrics["module_names"] = self.module_names
 
         if self.log_layerwise_stats:
-            metrics["unstructured_bops_compression_rate_pr_module"] = (
-                _named_tensor_values(
-                    self.module_names,
-                    compression_pr_module,
-                )
+            _add_module_metric(
+                metrics,
+                self.module_names,
+                "compression_rate",
+                compression_pr_module,
             )
 
         if self.log_total_bops:
             metrics.update(
                 {
-                    "unstructured_bops": total,
-                    "unstructured_bops_baseline": baseline_total,
+                    "bops": total,
+                    "baseline": baseline_total,
                 }
             )
             if self.log_layerwise_stats:
-                metrics.update(
-                    {
-                        "unstructured_bops_pr_module": _named_tensor_values(
-                            self.module_names,
-                            result,
-                        ),
-                        "unstructured_bops_baseline_pr_module": _named_tensor_values(
-                            self.module_names,
-                            baseline,
-                        ),
-                    }
+                _add_module_metric(
+                    metrics,
+                    self.module_names,
+                    "bops",
+                    result,
+                )
+                _add_module_metric(
+                    metrics,
+                    self.module_names,
+                    "baseline",
+                    baseline,
                 )
 
         if self.log_compression_rate:
-            metrics["unstructured_bops_compression_rate"] = compression
+            metrics["compression_rate"] = compression
 
         return metrics
 

@@ -15,6 +15,7 @@ from torch_weighttracker.trackers.bops_filter import (
 
 
 class StructuredBOPs(BaseTracker):
+    metric_namespace = "structured_bops"
     required_calculations = (
         CalcType.ACTIVE_MACS_PR_MODULE,
         CalcType.BITRATE_PR_MODULE,
@@ -29,9 +30,10 @@ class StructuredBOPs(BaseTracker):
         log_compression_rate: bool = False,
         log_total_bops: bool = False,
         log_layerwise_stats: bool = False,
+        convert_tensors: bool = True,
         _module_names: Iterable[str] = (),
     ) -> None:
-        super().__init__(calculations=calculations)
+        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
         self.log_module_names = log_module_names
         self.log_compression_rate = log_compression_rate
         self.log_total_bops = log_total_bops
@@ -90,43 +92,43 @@ class StructuredBOPs(BaseTracker):
         compression_pr_module = _compression_rate(result, baseline)
 
         metrics = {
-            "structured_bops_compression": compression,
+            "compression": compression,
         }
 
         if self.log_module_names:
-            metrics["structured_bops_module_names"] = self.module_names
+            metrics["module_names"] = self.module_names
 
         if self.log_layerwise_stats:
-            metrics["structured_bops_compression_rate_pr_module"] = (
-                _named_tensor_values(
-                    self.module_names,
-                    compression_pr_module,
-                )
+            _add_module_metric(
+                metrics,
+                self.module_names,
+                "compression_rate",
+                compression_pr_module,
             )
 
         if self.log_total_bops:
             metrics.update(
                 {
-                    "structured_bops": total,
-                    "structured_bops_baseline": baseline_total,
+                    "bops": total,
+                    "baseline": baseline_total,
                 }
             )
             if self.log_layerwise_stats:
-                metrics.update(
-                    {
-                        "structured_bops_pr_module": _named_tensor_values(
-                            self.module_names,
-                            result,
-                        ),
-                        "structured_bops_baseline_pr_module": _named_tensor_values(
-                            self.module_names,
-                            baseline,
-                        ),
-                    }
+                _add_module_metric(
+                    metrics,
+                    self.module_names,
+                    "bops",
+                    result,
+                )
+                _add_module_metric(
+                    metrics,
+                    self.module_names,
+                    "baseline",
+                    baseline,
                 )
 
         if self.log_compression_rate:
-            metrics["structured_bops_compression_rate"] = compression
+            metrics["compression_rate"] = compression
 
         return metrics
 
@@ -149,8 +151,12 @@ def _compression_rate(active: torch.Tensor, baseline: torch.Tensor) -> torch.Ten
     )
 
 
-def _named_tensor_values(
+def _add_module_metric(
+    metrics: dict,
     module_names: Iterable[str],
+    key: str,
     values: torch.Tensor,
-) -> dict[str, torch.Tensor]:
-    return {name: value for name, value in zip(module_names, values, strict=True)}
+) -> None:
+    modules = metrics.setdefault("modules", {})
+    for name, value in zip(module_names, values, strict=True):
+        modules.setdefault(name, {})[key] = value

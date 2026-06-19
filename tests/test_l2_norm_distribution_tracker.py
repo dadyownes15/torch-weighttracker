@@ -19,19 +19,22 @@ def test_l2_norm_distribution_reports_exact_l2_values_pr_group() -> None:
     model, groups = _model_and_groups()
     tracker = _tracker_from_groups(model, groups)
 
-    l2_tracker = tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION)
-    metrics = l2_tracker.track()
+    l2_tracker = tracker.create_tracker(
+        TrackerType.L2_NORM_DISTRIBUTION,
+        convert_tensors=False,
+    )
+    metrics = l2_tracker.track()["l2_norm_distribution"]["groups"]
 
     assert tuple(metrics) == (
-        "l2_norm_distribution/fc1:prune_out_channels",
-        "l2_norm_distribution/fc2:prune_out_channels",
+        "fc1:prune_out_channels",
+        "fc2:prune_out_channels",
     )
     torch.testing.assert_close(
-        metrics["l2_norm_distribution/fc1:prune_out_channels"],
+        metrics["fc1:prune_out_channels"],
         torch.tensor([torch.sqrt(torch.tensor(17.0)), 0.0, 7.0]),
     )
     torch.testing.assert_close(
-        metrics["l2_norm_distribution/fc2:prune_out_channels"],
+        metrics["fc2:prune_out_channels"],
         torch.tensor([torch.sqrt(torch.tensor(52.0))]),
     )
     assert tracker.trackers == [l2_tracker]
@@ -43,39 +46,34 @@ def test_l2_norm_distribution_ignore_is_invariant_to_ignored_weights() -> None:
     l2_tracker = tracker.create_tracker(
         TrackerType.L2_NORM_DISTRIBUTION,
         ignore=[model.fc2],
+        convert_tensors=False,
     )
 
-    before = l2_tracker.track()
+    before = l2_tracker.track()["l2_norm_distribution"]["groups"]
 
     torch.testing.assert_close(
-        before["l2_norm_distribution/fc1:prune_out_channels"],
+        before["fc1:prune_out_channels"],
         torch.tensor([1.0, 0.0, torch.sqrt(torch.tensor(13.0))]),
     )
-    torch.testing.assert_close(
-        before["l2_norm_distribution/fc2:prune_out_channels"],
-        torch.tensor([0.0]),
-    )
+    assert "fc2:prune_out_channels" not in before
 
     with torch.no_grad():
         model.fc2.weight.add_(1000.0)
 
-    after_ignored_change = l2_tracker.track()
+    after_ignored_change = l2_tracker.track()["l2_norm_distribution"]["groups"]
     torch.testing.assert_close(
-        after_ignored_change["l2_norm_distribution/fc1:prune_out_channels"],
-        before["l2_norm_distribution/fc1:prune_out_channels"],
+        after_ignored_change["fc1:prune_out_channels"],
+        before["fc1:prune_out_channels"],
     )
-    torch.testing.assert_close(
-        after_ignored_change["l2_norm_distribution/fc2:prune_out_channels"],
-        before["l2_norm_distribution/fc2:prune_out_channels"],
-    )
+    assert tuple(after_ignored_change) == tuple(before)
 
     with torch.no_grad():
         model.fc1.weight.add_(1.0)
 
-    after_tracked_change = l2_tracker.track()
+    after_tracked_change = l2_tracker.track()["l2_norm_distribution"]["groups"]
     assert not torch.allclose(
-        after_tracked_change["l2_norm_distribution/fc1:prune_out_channels"],
-        before["l2_norm_distribution/fc1:prune_out_channels"],
+        after_tracked_change["fc1:prune_out_channels"],
+        before["fc1:prune_out_channels"],
     )
 
 
@@ -85,39 +83,34 @@ def test_l2_norm_distribution_include_is_invariant_to_excluded_weights() -> None
     l2_tracker = tracker.create_tracker(
         TrackerType.L2_NORM_DISTRIBUTION,
         include=[model.fc1],
+        convert_tensors=False,
     )
 
-    before = l2_tracker.track()
+    before = l2_tracker.track()["l2_norm_distribution"]["groups"]
 
     torch.testing.assert_close(
-        before["l2_norm_distribution/fc1:prune_out_channels"],
+        before["fc1:prune_out_channels"],
         torch.tensor([1.0, 0.0, torch.sqrt(torch.tensor(13.0))]),
     )
-    torch.testing.assert_close(
-        before["l2_norm_distribution/fc2:prune_out_channels"],
-        torch.tensor([0.0]),
-    )
+    assert "fc2:prune_out_channels" not in before
 
     with torch.no_grad():
         model.fc2.weight.add_(1000.0)
 
-    after_excluded_change = l2_tracker.track()
+    after_excluded_change = l2_tracker.track()["l2_norm_distribution"]["groups"]
     torch.testing.assert_close(
-        after_excluded_change["l2_norm_distribution/fc1:prune_out_channels"],
-        before["l2_norm_distribution/fc1:prune_out_channels"],
+        after_excluded_change["fc1:prune_out_channels"],
+        before["fc1:prune_out_channels"],
     )
-    torch.testing.assert_close(
-        after_excluded_change["l2_norm_distribution/fc2:prune_out_channels"],
-        before["l2_norm_distribution/fc2:prune_out_channels"],
-    )
+    assert tuple(after_excluded_change) == tuple(before)
 
     with torch.no_grad():
         model.fc1.weight.add_(1.0)
 
-    after_included_change = l2_tracker.track()
+    after_included_change = l2_tracker.track()["l2_norm_distribution"]["groups"]
     assert not torch.allclose(
-        after_included_change["l2_norm_distribution/fc1:prune_out_channels"],
-        before["l2_norm_distribution/fc1:prune_out_channels"],
+        after_included_change["fc1:prune_out_channels"],
+        before["fc1:prune_out_channels"],
     )
 
 
@@ -142,6 +135,6 @@ def test_l2_norm_distribution_names_attention_head_dim_groups() -> None:
 
     metrics = tracker.create_tracker(TrackerType.L2_NORM_DISTRIBUTION).track()
 
-    assert tuple(metrics) == (
-        "l2_norm_distribution/proj:prune_in_channels:head_dim",
+    assert tuple(metrics["l2_norm_distribution"]["groups"]) == (
+        "proj:prune_in_channels:head_dim",
     )

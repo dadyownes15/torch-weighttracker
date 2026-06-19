@@ -14,15 +14,17 @@ from torch_weighttracker.trackers.base import BaseTracker
 
 
 class UnstructuredSparsity(BaseTracker):
+    metric_namespace = "unstructured_sparsity"
     required_calculations = (CalcType.UNSTRUCTURED_SPARSITY_PR_MODULE,)
 
     def __init__(
         self,
         calculations=None,
         *,
+        convert_tensors: bool = True,
         _module_names: Iterable[str] = (),
     ) -> None:
-        super().__init__(calculations=calculations)
+        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
         self.module_names = tuple(_module_names)
 
     @classmethod
@@ -65,7 +67,7 @@ class UnstructuredSparsity(BaseTracker):
         counts = result.view(-1, 2)
         if counts.numel() == 0:
             return {
-                "unstructured_sparsity": result.new_zeros(()),
+                "sparsity": result.new_zeros(()),
                 "layers": {},
             }
 
@@ -75,7 +77,7 @@ class UnstructuredSparsity(BaseTracker):
         total_sparsity = _safe_fraction(zero_counts.sum(), total_counts.sum())
 
         return {
-            "unstructured_sparsity": total_sparsity,
+            "sparsity": total_sparsity,
             "layers": {
                 name: sparsity
                 for name, sparsity in zip(

@@ -19,3 +19,4 @@ docs/
 DEPLOYMENT.dev.md
 scripts/
 AGENTS.md
+tests/dev_local

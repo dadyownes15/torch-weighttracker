@@ -31,9 +31,14 @@ class StructuredBOPs(BaseTracker):
         log_total_bops: bool = False,
         log_layerwise_stats: bool = False,
         convert_tensors: bool = True,
+        wandb_format: bool = False,
         _module_names: Iterable[str] = (),
     ) -> None:
-        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
+        super().__init__(
+            calculations=calculations,
+            convert_tensors=convert_tensors,
+            wandb_format=wandb_format,
+        )
         self.log_module_names = log_module_names
         self.log_compression_rate = log_compression_rate
         self.log_total_bops = log_total_bops

@@ -29,9 +29,14 @@ class GroupPruningSummary(BaseTracker):
         calculations=None,
         *,
         convert_tensors: bool = True,
+        wandb_format: bool = False,
         _group_names: Iterable[str] = (),
     ) -> None:
-        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
+        super().__init__(
+            calculations=calculations,
+            convert_tensors=convert_tensors,
+            wandb_format=wandb_format,
+        )
         self.group_names = tuple(_group_names)
 
     @classmethod

@@ -26,9 +26,14 @@ class Nvidia24Sparsity(BaseTracker):
         *,
         log_layerwise_stats: bool = False,
         convert_tensors: bool = True,
+        wandb_format: bool = False,
         _module_names: Iterable[str] = (),
     ) -> None:
-        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
+        super().__init__(
+            calculations=calculations,
+            convert_tensors=convert_tensors,
+            wandb_format=wandb_format,
+        )
         self.log_layerwise_stats = log_layerwise_stats
         self.module_names = tuple(_module_names)
 

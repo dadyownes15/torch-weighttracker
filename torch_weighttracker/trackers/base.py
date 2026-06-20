@@ -82,10 +82,12 @@ class BaseTracker(nn.Module, ABC):
         calculations: Mapping[CalcType, nn.Module] | None = None,
         *,
         convert_tensors: bool = True,
+        wandb_format: bool = False,
     ) -> None:
         super().__init__()
         calculations = {} if calculations is None else calculations
         self.convert_tensors = convert_tensors
+        self.wandb_format = wandb_format
 
         missing = [
             calc_type
@@ -124,6 +126,9 @@ class BaseTracker(nn.Module, ABC):
         if self.convert_tensors:
             metrics = _convert_metric_value(metrics)
 
+        if self.wandb_format:
+            return _flatten_metric_mapping(self.metric_namespace, metrics)
+
         return {self.metric_namespace: metrics}
 
     def calc(self, calc_type: CalcType | str) -> nn.Module:
@@ -151,6 +156,16 @@ def _convert_metric_value(value):
         return [_convert_metric_value(item) for item in value]
 
     return value
+
+
+def _flatten_metric_mapping(prefix: str, value) -> dict[str, object]:
+    if not isinstance(value, Mapping):
+        return {prefix: value}
+
+    flattened = {}
+    for key, item in value.items():
+        flattened.update(_flatten_metric_mapping(f"{prefix}/{key}", item))
+    return flattened
 
 
 def tracker_class_for_type(tracker_type: TrackerTypeInput):

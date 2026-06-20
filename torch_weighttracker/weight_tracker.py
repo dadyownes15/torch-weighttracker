@@ -714,7 +714,10 @@ class WeightTracker:
                 raise TypeError from the tracker constructor.
                 All trackers accept convert_tensors, which defaults to True and
                 converts tensor metric values to Python scalars/lists. Set
-                convert_tensors=False to preserve tensors.
+                convert_tensors=False to preserve tensors. All trackers also
+                accept wandb_format, which defaults to False. Set
+                wandb_format=True to flatten nested metrics into slash-delimited
+                keys such as "structured_bops/compression" for wandb.log.
 
         StructuredBOPs kwargs:
             log_total_bops (bool): Include active and baseline structured BOP

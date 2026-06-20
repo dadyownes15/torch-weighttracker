@@ -254,7 +254,14 @@ metrics = tracker.track()
 
 Tracker metrics are nested by tracker name and convert tensor values to Python
 numbers/lists by default. Pass `convert_tensors=False` to preserve tensors in
-the returned metrics.
+the returned metrics. Pass `wandb_format=True` to return a flat W&B-style dict:
+
+```python
+tracker.create_tracker("structured_bops", wandb_format=True)
+metrics = tracker.track()
+# {"structured_bops/compression": 0.98}
+# wandb.log(metrics)
+```
 
 #### Formulation of the Structured BOPs Metric
 

@@ -23,10 +23,15 @@ class L2NormDistribution(BaseTracker):
         calculations=None,
         *,
         convert_tensors: bool = True,
+        wandb_format: bool = False,
         _group_names: Iterable[str] = (),
         _group_slices: Iterable[tuple[int, int]] = (),
     ) -> None:
-        super().__init__(calculations=calculations, convert_tensors=convert_tensors)
+        super().__init__(
+            calculations=calculations,
+            convert_tensors=convert_tensors,
+            wandb_format=wandb_format,
+        )
         self.group_names = tuple(_group_names)
         self.group_slices = tuple(_group_slices)
 

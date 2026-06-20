@@ -266,6 +266,92 @@ def test_create_tracker_accepts_tracker_type_lists(tracker_types) -> None:
     assert "pruned_units" in metrics["group_pruning_summary"]
 
 
+def test_wandb_format_flattens_structured_bops_metrics() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+
+    metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_total_bops=True,
+        log_layerwise_stats=True,
+        wandb_format=True,
+    ).track()
+
+    assert "structured_bops" not in metrics
+    assert set(metrics) == {
+        "structured_bops/compression",
+        "structured_bops/bops",
+        "structured_bops/baseline",
+        "structured_bops/modules/fc1/compression_rate",
+        "structured_bops/modules/fc1/bops",
+        "structured_bops/modules/fc1/baseline",
+        "structured_bops/modules/fc2/compression_rate",
+        "structured_bops/modules/fc2/bops",
+        "structured_bops/modules/fc2/baseline",
+    }
+    _assert_no_tensors(metrics)
+    _assert_metric_close(
+        metrics["structured_bops/compression"],
+        torch.tensor(1.0 - 96.0 / 9216.0),
+    )
+    _assert_metric_close(
+        metrics["structured_bops/modules/fc1/bops"],
+        torch.tensor(64.0),
+    )
+    _assert_metric_close(
+        metrics["structured_bops/modules/fc2/baseline"],
+        torch.tensor(3072.0),
+    )
+
+
+def test_wandb_format_preserves_tensors_when_convert_tensors_is_false() -> None:
+    model, _ = _model_and_groups()
+
+    metrics = (
+        WeightTracker(model)
+        .create_tracker(
+            TrackerType.UNSTRUCTURED_SPARSITY,
+            wandb_format=True,
+            convert_tensors=False,
+        )
+        .track()
+    )
+
+    assert isinstance(metrics["unstructured_sparsity/sparsity"], torch.Tensor)
+    torch.testing.assert_close(
+        metrics["unstructured_sparsity/sparsity"],
+        torch.tensor(4.0 / 9.0),
+    )
+    torch.testing.assert_close(
+        metrics["unstructured_sparsity/layers/fc1"],
+        torch.tensor(3.0 / 6.0),
+    )
+
+
+def test_weight_tracker_track_merges_wandb_formatted_tracker_metrics() -> None:
+    model, groups = _model_and_groups()
+    tracker = _tracker_from_groups(model, groups)
+
+    created_trackers = tracker.create_tracker(
+        [TrackerType.UNSTRUCTURED_SPARSITY, TrackerType.GROUP_PRUNING_SUMMARY],
+        wandb_format=True,
+    )
+    metrics = tracker.track()
+
+    assert tracker.trackers == created_trackers
+    assert "unstructured_sparsity" not in metrics
+    assert "group_pruning_summary" not in metrics
+    assert "unstructured_sparsity/sparsity" in metrics
+    assert "unstructured_sparsity/layers/fc1" in metrics
+    assert "group_pruning_summary/pruned_units" in metrics
+    assert (
+        "group_pruning_summary/groups/fc1:prune_out_channels/pruned_units" in metrics
+    )
+
+
 def test_invalid_tracker_type_lists_available_tracker_values() -> None:
     model, groups = _model_and_groups()
     tracker = _tracker_from_groups(model, groups)

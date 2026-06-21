@@ -1,4 +1,4 @@
-from collections.abc import Callable, Iterable, Mapping
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 
 import torch
@@ -101,6 +101,7 @@ class WeightTracker:
         prune_num_heads=False,
         device=None,
         dtype=None,
+        baseline_macs_pr_module: Sequence[float] | torch.Tensor | None = None,
         post_prune_hooks: Iterable[Callable[["WeightTracker"], None]] = (),
     ) -> None:
         self.model = model
@@ -137,6 +138,10 @@ class WeightTracker:
         self._weighted_module_entries = None
         self._weighted_modules = None
         self._weighted_module_index = None
+        self._baseline_macs_pr_module = _normalize_baseline_macs_pr_module(
+            baseline_macs_pr_module,
+            expected_length=len(self._get_weighted_modules()),
+        )
         self.regularizers = []
         self.trackers = []
 
@@ -721,9 +726,10 @@ class WeightTracker:
 
         StructuredBOPs kwargs:
             log_total_bops (bool): Include active and baseline structured BOP
-                totals as "bops" and "baseline". When
-                log_layerwise_stats=True, also include per-module values under
-                "modules". Default: False.
+                totals as "bops" and "baseline", plus
+                "baseline_macs_pr_module" for reuse in a later WeightTracker.
+                When log_layerwise_stats=True, also include per-module values
+                under "modules". Default: False.
             log_module_names (bool): Include "module_names", aligned with
                 "modules". Default: False.
             log_layerwise_stats (bool): Include per-module StructuredBOPs
@@ -735,9 +741,10 @@ class WeightTracker:
 
         UnstructuredBOPs kwargs:
             log_total_bops (bool): Include active and baseline unstructured BOP
-                totals as "bops" and "baseline". When
-                log_layerwise_stats=True, also include per-module values under
-                "modules". Default: False.
+                totals as "bops" and "baseline", plus
+                "baseline_macs_pr_module" for reuse in a later WeightTracker.
+                When log_layerwise_stats=True, also include per-module values
+                under "modules". Default: False.
             log_module_names (bool): Include "module_names", aligned with
                 "modules". Default: False.
             log_layerwise_stats (bool): Include per-module UnstructuredBOPs
@@ -902,6 +909,7 @@ class WeightTracker:
             },
             example_inputs=self.example_inputs,
             weighted_module_names=self._module_names_for_modules(weighted_modules),
+            baseline_macs_pr_module=self._baseline_macs_for_modules(weighted_modules),
         )
 
     def _validate_consumer_context(self, context: CalculationContext) -> None:
@@ -962,6 +970,34 @@ class WeightTracker:
             }
         return self._weighted_module_index
 
+    def _baseline_macs_for_modules(
+        self,
+        weighted_modules: Iterable[nn.Module],
+    ) -> torch.Tensor | None:
+        if self._baseline_macs_pr_module is None:
+            return None
+
+        all_weighted_modules = self._get_weighted_modules()
+        if self._baseline_macs_pr_module.numel() != len(all_weighted_modules):
+            raise ValueError(
+                "baseline_macs_pr_module length no longer matches the weighted "
+                "module count."
+            )
+
+        weighted_modules = tuple(weighted_modules)
+        full_index = self._get_weighted_module_index()
+        indices: list[int] = []
+        for module in weighted_modules:
+            try:
+                indices.append(full_index[module])
+            except KeyError as error:
+                raise ValueError(
+                    "Calculation context contains a weighted module that is not "
+                    "part of this WeightTracker baseline."
+                ) from error
+
+        return self._baseline_macs_pr_module[indices]
+
     def _module_names_for_modules(
         self,
         modules: Iterable[nn.Module],
@@ -998,6 +1034,34 @@ def _normalize_unwrapped_parameters(unwrapped_parameters):
         return list(unwrapped_parameters.items())
 
     return unwrapped_parameters
+
+
+def _normalize_baseline_macs_pr_module(
+    baseline_macs_pr_module: Sequence[float] | torch.Tensor | None,
+    *,
+    expected_length: int,
+) -> torch.Tensor | None:
+    if baseline_macs_pr_module is None:
+        return None
+
+    if isinstance(baseline_macs_pr_module, torch.Tensor):
+        baseline = baseline_macs_pr_module.detach().clone()
+    else:
+        baseline = torch.as_tensor(baseline_macs_pr_module)
+
+    if baseline.ndim != 1:
+        raise ValueError(
+            "baseline_macs_pr_module must be a 1D tensor or sequence."
+        )
+
+    if baseline.numel() != expected_length:
+        raise ValueError(
+            "baseline_macs_pr_module length "
+            f"{baseline.numel()} does not match weighted module count "
+            f"{expected_length}."
+        )
+
+    return baseline
 
 
 def _validate_example_inputs_device(model: nn.Module, example_inputs) -> None:

@@ -23,6 +23,7 @@ class CalculationContext:
     weighted_module_index: Mapping[nn.Module, int]
     example_inputs: object | None = None
     weighted_module_names: tuple[str, ...] = ()
+    baseline_macs_pr_module: torch.Tensor | None = None
 
 
 def calculation_dtype(ctx: CalculationContext) -> torch.dtype:

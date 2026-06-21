@@ -91,7 +91,8 @@ class StructuredBOPs(BaseTracker):
 
     def toMetric(self, result):
         total = result.sum()
-        baseline = self._baseline_bops_pr_module()
+        baseline_macs = self._baseline_macs_pr_module()
+        baseline = baseline_macs * (32 * 32)
         baseline_total = baseline.sum()
         compression = _compression_rate(total, baseline_total)
         compression_pr_module = _compression_rate(result, baseline)
@@ -116,6 +117,7 @@ class StructuredBOPs(BaseTracker):
                 {
                     "bops": total,
                     "baseline": baseline_total,
+                    "baseline_macs_pr_module": baseline_macs,
                 }
             )
             if self.log_layerwise_stats:
@@ -138,8 +140,11 @@ class StructuredBOPs(BaseTracker):
         return metrics
 
     def _baseline_bops_pr_module(self):
+        return self._baseline_macs_pr_module() * (32 * 32)
+
+    def _baseline_macs_pr_module(self):
         baseline_macs = self.calc(CalcType.BASELINE_MACS_PR_MODULE)()
-        return baseline_macs * (32 * 32)
+        return baseline_macs
 
 
 def _compression_rate(active: torch.Tensor, baseline: torch.Tensor) -> torch.Tensor:

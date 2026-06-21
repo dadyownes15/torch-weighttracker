@@ -49,7 +49,8 @@ tracker.prune_zero_units()
 python -m pip install torch-weighttracker
 ```
 
-BOPs MAC accounting uses `fvcore` for baseline per-module MACs:
+BOPs MAC accounting uses `fvcore` for baseline per-module MACs unless you pass
+an explicit baseline to `WeightTracker`:
 
 ```bash
 python -m pip install "torch-weighttracker[structured-bops]"
@@ -239,7 +240,23 @@ raw_metrics = tracker.create_tracker(
 
 structured = raw_metrics["structured_bops"]
 print(structured["bops"])
+print(structured["baseline_macs_pr_module"])
 print(structured["modules"])
+```
+
+`baseline_macs_pr_module` is a reusable per-weighted-module MAC vector. It is
+emitted when `log_total_bops=True` and can seed a later tracker without
+recomputing MACs with `fvcore`:
+
+```python
+baseline_macs = raw_metrics["structured_bops"]["baseline_macs_pr_module"]
+
+rebuilt_tracker = WeightTracker(
+    rebuilt_model,
+    example_inputs=example_inputs,
+    baseline_macs_pr_module=baseline_macs,
+)
+rebuilt_tracker.create_tracker("structured_bops", log_total_bops=True)
 ```
 
 `create_tracker` accepts a single `TrackerType`/string or a list of tracker
@@ -396,6 +413,7 @@ raw_metrics = tracker.create_tracker(
 
 unstructured = raw_metrics["unstructured_bops"]
 print(unstructured["bops"])
+print(unstructured["baseline_macs_pr_module"])
 print(unstructured["modules"])
 ```
 

@@ -246,6 +246,154 @@ def test_create_tracker_wires_unstructured_bops_from_required_calculations() -> 
     assert tracker.trackers == [unstructured_bops]
 
 
+def test_baseline_macs_override_builds_cached_baseline_calculation() -> None:
+    model = TinyLinearChain()
+    tracker = WeightTracker(model, baseline_macs_pr_module=[10, 20])
+
+    baseline = tracker.get_calculation(CalcType.BASELINE_MACS_PR_MODULE)
+    repeated = tracker.get_calculation(CalcType.BASELINE_MACS_PR_MODULE)
+
+    assert baseline is repeated
+    assert tracker.calculations[CalcType.BASELINE_MACS_PR_MODULE] is baseline
+    torch.testing.assert_close(baseline(), torch.tensor([10.0, 20.0]))
+
+
+def test_structured_bops_uses_weight_tracker_baseline_macs_override() -> None:
+    model, groups = _model_and_groups()
+    with torch.no_grad():
+        model.fc1.weight.fill_(1)
+        model.fc2.weight.fill_(1)
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(
+        model,
+        groups,
+        baseline_macs_pr_module=[10, 20],
+    )
+
+    structured_bops = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        log_total_bops=True,
+        convert_tensors=False,
+    )
+    metrics = structured_bops.track()["structured_bops"]
+
+    assert any(
+        calculation is structured_bops.calc(CalcType.BASELINE_MACS_PR_MODULE)
+        for calculation in tracker.calculations.values()
+    )
+    torch.testing.assert_close(
+        metrics["baseline_macs_pr_module"],
+        torch.tensor([10.0, 20.0]),
+    )
+    torch.testing.assert_close(metrics["bops"], torch.tensor(480.0))
+    torch.testing.assert_close(metrics["baseline"], torch.tensor(30.0 * 32.0 * 32.0))
+    torch.testing.assert_close(
+        metrics["compression"],
+        torch.tensor(1.0 - 480.0 / (30.0 * 32.0 * 32.0)),
+    )
+
+
+def test_unstructured_bops_uses_weight_tracker_baseline_macs_tensor_override() -> None:
+    model, groups = _model_and_groups()
+    with torch.no_grad():
+        model.fc1.weight.fill_(1)
+        model.fc2.weight.fill_(1)
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(
+        model,
+        groups,
+        baseline_macs_pr_module=torch.tensor([10.0, 20.0]),
+    )
+
+    metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_total_bops=True,
+        convert_tensors=False,
+    ).track()["unstructured_bops"]
+
+    torch.testing.assert_close(
+        metrics["baseline_macs_pr_module"],
+        torch.tensor([10.0, 20.0]),
+    )
+    torch.testing.assert_close(metrics["bops"], torch.tensor(480.0))
+    torch.testing.assert_close(metrics["baseline"], torch.tensor(30.0 * 32.0 * 32.0))
+    torch.testing.assert_close(
+        metrics["compression"],
+        torch.tensor(1.0 - 480.0 / (30.0 * 32.0 * 32.0)),
+    )
+
+
+def test_bops_filters_subset_weight_tracker_baseline_macs_override() -> None:
+    model = TinyConvBatchNormHead().eval()
+    tracker = WeightTracker(
+        model,
+        baseline_macs_pr_module=[100, 200, 300],
+    )
+
+    metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_total_bops=True,
+        log_module_names=True,
+        convert_tensors=False,
+    ).track()["unstructured_bops"]
+
+    assert metrics["module_names"] == ("conv", "fc")
+    torch.testing.assert_close(
+        metrics["baseline_macs_pr_module"],
+        torch.tensor([100.0, 300.0]),
+    )
+    torch.testing.assert_close(metrics["baseline"], torch.tensor(400.0 * 32.0 * 32.0))
+
+
+def test_baseline_macs_override_validation_rejects_bad_shape() -> None:
+    with pytest.raises(ValueError, match="1D tensor or sequence"):
+        WeightTracker(
+            TinyLinearChain(),
+            baseline_macs_pr_module=torch.ones(1, 2),
+        )
+
+
+def test_baseline_macs_override_validation_rejects_length_mismatch() -> None:
+    with pytest.raises(ValueError, match="does not match weighted module count 2"):
+        WeightTracker(
+            TinyLinearChain(),
+            baseline_macs_pr_module=[10],
+        )
+
+
+def test_recorded_baseline_macs_can_seed_rebuilt_tracker() -> None:
+    original_model, original_groups = _model_and_groups()
+    original_tracker = _tracker_from_groups(
+        original_model,
+        original_groups,
+        example_inputs=torch.randn(1, 2),
+    )
+    recorded = original_tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_total_bops=True,
+        convert_tensors=False,
+    ).track()["unstructured_bops"]["baseline_macs_pr_module"]
+
+    rebuilt_model, rebuilt_groups = _model_and_groups()
+    rebuilt_tracker = _tracker_from_groups(
+        rebuilt_model,
+        rebuilt_groups,
+        baseline_macs_pr_module=recorded,
+    )
+    metrics = rebuilt_tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        log_total_bops=True,
+        convert_tensors=False,
+    ).track()["unstructured_bops"]
+
+    torch.testing.assert_close(metrics["baseline_macs_pr_module"], recorded)
+    torch.testing.assert_close(metrics["baseline"], recorded.sum() * 32.0 * 32.0)
+
+
 @pytest.mark.parametrize(
     "tracker_types",
     (
@@ -285,6 +433,7 @@ def test_wandb_format_flattens_structured_bops_metrics() -> None:
         "structured_bops/compression",
         "structured_bops/bops",
         "structured_bops/baseline",
+        "structured_bops/baseline_macs_pr_module",
         "structured_bops/modules/fc1/compression_rate",
         "structured_bops/modules/fc1/bops",
         "structured_bops/modules/fc1/baseline",
@@ -935,6 +1084,7 @@ def test_structured_bops_layerwise_stats_are_opt_in() -> None:
         "compression",
         "bops",
         "baseline",
+        "baseline_macs_pr_module",
     }
     assert layerwise.keys() == {
         "compression",
@@ -969,6 +1119,7 @@ def test_unstructured_bops_layerwise_stats_are_opt_in() -> None:
         "compression",
         "bops",
         "baseline",
+        "baseline_macs_pr_module",
     }
     assert layerwise.keys() == {
         "compression",

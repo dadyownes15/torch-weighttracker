@@ -32,6 +32,11 @@ def create_baseline_macs_pr_module_calc(
     device: torch.device | str,
     dtype: torch.dtype,
 ) -> BaselineMacsPrModuleCalc:
+    if ctx.baseline_macs_pr_module is not None:
+        return BaselineMacsPrModuleCalc(
+            ctx.baseline_macs_pr_module.to(device=device, dtype=dtype)
+        )
+
     if ctx.example_inputs is None:
         raise ValueError(
             "BASELINE_MACS_PR_MODULE requires example_inputs so fvcore can "

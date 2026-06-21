@@ -236,9 +236,9 @@ class WeightTracker:
     def view_zero_units(
         self,
         *,
-        ignore: Iterable[FilterItem] = (),
+        ignore_condition: Iterable[FilterItem] = (),
     ) -> ZeroUnitView:
-        filters = ConsumerFilter(ignore=ignore)
+        filters = ConsumerFilter(ignore=ignore_condition)
         filtered_groups = self._zero_detection_groups(filters=filters)
         visible_groups = tuple(
             (group, filtered_group)
@@ -304,24 +304,30 @@ class WeightTracker:
         self,
         *,
         dry_run: bool = False,
-        ignore: Iterable[FilterItem] = (),
+        ignore_condition: Iterable[FilterItem] = (),
+        ignore_prune: Iterable[FilterItem] = (),
     ) -> PruneZeroUnitsResult:
-        return self.prune_zero_structures(dry_run=dry_run, ignore=ignore)
+        return self.prune_zero_structures(
+            dry_run=dry_run,
+            ignore_condition=ignore_condition,
+            ignore_prune=ignore_prune,
+        )
 
     def view_zero_structures(
         self,
         *,
-        ignore: Iterable[FilterItem] = (),
+        ignore_condition: Iterable[FilterItem] = (),
     ) -> ZeroUnitView:
-        return self.view_zero_units(ignore=ignore)
+        return self.view_zero_units(ignore_condition=ignore_condition)
 
     def prune_zero_structures(
         self,
         *,
         dry_run: bool = False,
-        ignore: Iterable[FilterItem] = (),
+        ignore_condition: Iterable[FilterItem] = (),
+        ignore_prune: Iterable[FilterItem] = (),
     ) -> PruneZeroUnitsResult:
-        view = self.view_zero_units(ignore=ignore)
+        view = self.view_zero_units(ignore_condition=ignore_condition)
         if dry_run or view.total_zero_units == 0:
             return PruneZeroUnitsResult(
                 view=view,
@@ -329,7 +335,9 @@ class WeightTracker:
                 dry_run=dry_run,
             )
 
+        prune_filter = ConsumerFilter(ignore=ignore_prune)
         events: list[PruneUnitResult] = []
+        pruned_units = 0
         for zero_group in view.groups:
             pruning_idxs = tuple(
                 sorted(
@@ -344,11 +352,18 @@ class WeightTracker:
                 zero_group.group_id,
                 pruning_idxs,
             )
+            if self._pruning_group_touches_ignore_prune_module(
+                pruning_group,
+                prune_filter,
+            ):
+                continue
+
             self._prepare_group_for_physical_prune(
                 zero_group.group_id,
                 tuple(zero_unit.unit_id for zero_unit in zero_group.zero_units),
             )
             pruning_group.prune()
+            pruned_units += len(zero_group.zero_units)
             events.extend(
                 PruneUnitResult(
                     group_id=zero_unit.group_id,
@@ -358,10 +373,11 @@ class WeightTracker:
                 for zero_unit in zero_group.zero_units
             )
 
-        self._refresh_after_physical_prune(events)
+        if events:
+            self._refresh_after_physical_prune(events)
         return PruneZeroUnitsResult(
             view=view,
-            pruned_units=view.total_zero_units,
+            pruned_units=pruned_units,
             dry_run=False,
         )
 
@@ -408,6 +424,19 @@ class WeightTracker:
             module=member.module,
             pruning_fn=member.handler,
             idxs=pruning_idxs,
+        )
+
+    def _pruning_group_touches_ignore_prune_module(
+        self,
+        pruning_group,
+        filters: ConsumerFilter,
+    ) -> bool:
+        if not filters:
+            return False
+
+        return any(
+            not filters.allows(dep.target.module)
+            for dep, _ in pruning_group
         )
 
     def _prepare_group_for_physical_prune(

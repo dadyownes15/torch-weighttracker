@@ -1511,7 +1511,7 @@ def test_view_zero_structures_ignore_module_type_filters_detection_only() -> Non
     )
 
     unfiltered = tracker.view_zero_structures()
-    filtered = tracker.view_zero_structures(ignore=[nn.BatchNorm2d])
+    filtered = tracker.view_zero_structures(ignore_condition=[nn.BatchNorm2d])
 
     assert unfiltered.total_zero_units == 0
     assert filtered.total_zero_units == 1
@@ -1530,12 +1530,36 @@ def test_prune_zero_structures_ignore_still_prunes_coupled_modules() -> None:
         root_module_types=[nn.Conv2d],
     )
 
-    result = tracker.prune_zero_structures(ignore=[nn.BatchNorm2d])
+    result = tracker.prune_zero_structures(ignore_condition=[nn.BatchNorm2d])
 
     assert result.pruned_units == 1
     assert result.view.total_zero_units == 1
     assert model.conv.out_channels == 3
     assert model.bn.num_features == 3
+
+
+def test_prune_zero_structures_ignore_prune_skips_protected_root_module() -> None:
+    model = TinyConvBnNet()
+    with torch.no_grad():
+        model.conv.weight[1].zero_()
+        model.bn.weight.fill_(1.0)
+
+    tracker = WeightTracker(
+        model,
+        example_inputs=torch.randn(1, 3, 4, 4),
+        root_module_types=[nn.Conv2d],
+    )
+
+    result = tracker.prune_zero_structures(
+        ignore_condition=[nn.BatchNorm2d],
+        ignore_prune=[model.conv],
+    )
+
+    assert result.dry_run is False
+    assert result.pruned_units == 0
+    assert result.view.total_zero_units == 1
+    assert model.conv.out_channels == 4
+    assert model.bn.num_features == 4
 
 
 def test_view_structures_ignore_module_type_hides_members() -> None:
@@ -1556,8 +1580,8 @@ def test_zero_structure_ignore_all_members_returns_empty_view_and_noop_prune() -
     tracker = _dependency_built_linear_tracker()
     model = tracker.model
 
-    view = tracker.view_zero_structures(ignore=[nn.Linear])
-    result = tracker.prune_zero_structures(ignore=[nn.Linear])
+    view = tracker.view_zero_structures(ignore_condition=[nn.Linear])
+    result = tracker.prune_zero_structures(ignore_condition=[nn.Linear])
 
     assert view.total_zero_units == 0
     assert result.pruned_units == 0

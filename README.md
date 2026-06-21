@@ -93,13 +93,20 @@ Current use cases:
 `prune_zero_structures()`. You can also remove one canonical unit directly with
 `prune_unit(group_id, unit_id)`.
 
-Zero detection can ignore module instances or module types, matching tracker
-filter semantics. The ignore filter only decides whether a structure is zero; if
-that structure is pruned, the coupled Torch-Pruning group is still applied:
+Zero detection can ignore module instances or module types with
+`ignore_condition`, matching tracker filter semantics. This only decides whether
+a structure is zero; if that structure is pruned, the coupled Torch-Pruning
+group is still applied. Use `ignore_prune` separately for modules or module
+types that should block the physical prune, such as a stem `conv1`:
 
 ```python
-zero_view = tracker.view_zero_structures(ignore=[torch.nn.BatchNorm2d])
-tracker.prune_zero_structures(ignore=[torch.nn.BatchNorm2d])
+zero_view = tracker.view_zero_structures(
+    ignore_condition=[torch.nn.BatchNorm2d],
+)
+tracker.prune_zero_structures(
+    ignore_condition=[torch.nn.BatchNorm2d],
+    ignore_prune=[model.conv1],
+)
 ```
 
 Physical pruning changes module shapes and rebuilds the dependency state. Any

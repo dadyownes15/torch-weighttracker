@@ -42,7 +42,6 @@ from torch_weighttracker.regularizers import (
 )
 from torch_weighttracker.torch_pruning import ops
 from torch_weighttracker.torch_pruning.dependency import DependencyGraph
-from torch_weighttracker.torch_pruning.dependency.group import Group
 from torch_weighttracker.trackers import (
     TrackerType,
     tracker_class_for_type,
@@ -108,7 +107,6 @@ class WeightTracker:
         output_transform=None,
         unwrapped_parameters=None,
         customized_pruners=None,
-        ignored_layers=None,
         ignored_params=None,
         num_heads=None,
         prune_dim=None,
@@ -133,14 +131,7 @@ class WeightTracker:
         self.post_prune_hooks = tuple(post_prune_hooks)
         self.dependency_graph = None
 
-        self.ignored_layers = _expanded_ignored_layers(ignored_layers)
         self.ignored_params = [] if ignored_params is None else list(ignored_params)
-        self.ignored_params.extend(
-            item for item in self.ignored_layers if isinstance(item, nn.Parameter)
-        )
-        self.ignored_layers = [
-            item for item in self.ignored_layers if isinstance(item, nn.Module)
-        ]
 
         _validate_example_inputs_device(model, example_inputs)
         self.example_inputs = example_inputs
@@ -175,17 +166,11 @@ class WeightTracker:
 
         groups = list(
             self.dependency_graph.get_all_groups(
-                ignored_layers=self.ignored_layers,
                 root_module_types=self.root_module_types,
             )
         )
 
-        self.groups = []
-        for group in groups:
-            filtered_group = self._without_ignored_members(group)
-            if filtered_group is not None:
-                self.groups.append(filtered_group)
-
+        self.groups = groups
         self.canonical_groups = canonicalize_groups(
             self.groups,
             num_heads=self.num_heads,
@@ -491,24 +476,6 @@ class WeightTracker:
                     1,
                     current_num_heads - len(unit_ids),
                 )
-
-    def _without_ignored_members(self, group):
-        if len(self.ignored_layers) == 0:
-            return group
-
-        filtered_items = [
-            item
-            for item in group.items
-            if item.dep.target.module not in self.ignored_layers
-        ]
-
-        if len(filtered_items) == 0:
-            return None
-
-        filtered_group = Group()
-        filtered_group._group = list(filtered_items)
-        filtered_group._DG = getattr(group, "_DG", None)
-        return filtered_group
 
     def _get_calculation(
         self,
@@ -1046,20 +1013,6 @@ class WeightTracker:
             )
             for module in modules
         )
-
-
-def _expanded_ignored_layers(ignored_layers):
-    if ignored_layers is None:
-        return []
-
-    expanded = []
-    for layer in ignored_layers:
-        if isinstance(layer, nn.Module):
-            expanded.extend(list(layer.modules()))
-        else:
-            expanded.append(layer)
-
-    return expanded
 
 
 def _validate_baseline_macs_pr_module_tracker_types(

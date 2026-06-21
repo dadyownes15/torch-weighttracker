@@ -151,20 +151,16 @@ def test_view_structures_returns_canonical_group_printout() -> None:
     assert "    - fc2 Linear axis=out_channel layout=plain dest=(3)" in text
 
 
-def test_weight_tracker_removes_ignored_layer_members_from_groups() -> None:
+def test_weight_tracker_rejects_constructor_ignored_layers() -> None:
     model = TinyLinearChain()
-    tracker = WeightTracker(
-        model,
-        example_inputs=torch.randn(1, 2),
-        root_module_types=[nn.Linear],
-        ignored_layers=[model.fc2],
-    )
 
-    modules = {
-        member.module for group in tracker.canonical_groups for member in group.members
-    }
-    assert model.fc1 in modules
-    assert model.fc2 not in modules
+    with pytest.raises(TypeError, match="ignored_layers"):
+        WeightTracker(
+            model,
+            example_inputs=torch.randn(1, 2),
+            root_module_types=[nn.Linear],
+            ignored_layers=[model.fc2],
+        )
 
 
 def test_calculation_device_and_dtype_are_applied_to_pipeline_outputs() -> None:

@@ -6,11 +6,16 @@ import torch.nn as nn
 
 import torch_weighttracker.calculations.calculations as calculation_impl
 from torch_weighttracker.calculations import (
+    BaselineMacsPrModuleCalc,
     CachedCalculation,
     CalcType,
     CalculationContext,
 )
 from torch_weighttracker.calculations.base import Calculation
+from torch_weighttracker.calculations.context import (
+    calculation_device,
+    calculation_dtype,
+)
 from torch_weighttracker.canonical_units import (
     CanonicalMember,
     CanonicalUnitGroup,
@@ -46,6 +51,15 @@ from torch_weighttracker.trackers.base import (
     is_tracker_type_collection,
     normalize_tracker_types,
 )
+
+_BOP_TRACKER_TYPES = frozenset(
+    {
+        TrackerType.STRUCTURED_BOPS,
+        TrackerType.UNSTRUCTURED_BOPS,
+    }
+)
+_BASELINE_MACS_PR_MODULE_KWARG = "baseline_macs_pr_module"
+_MISSING = object()
 
 
 @dataclass(frozen=True)
@@ -502,11 +516,27 @@ class WeightTracker:
         *,
         context: CalculationContext | None = None,
         context_key: tuple | None = None,
+        calculation_overrides: Mapping[CalcType, Calculation] | None = None,
         stack: tuple[CalcType, ...] = (),
     ):
+        if (
+            calculation_overrides is not None
+            and calculation_type in calculation_overrides
+        ):
+            return calculation_overrides[calculation_type]
+
         if context is None:
             context = self._calculation_context()
             context_key = None
+
+        if calculation_overrides:
+            return self._build_calculation(
+                calculation_type,
+                context=context,
+                context_key=context_key,
+                calculation_overrides=calculation_overrides,
+                stack=stack,
+            )
 
         cache_key = self._calculation_cache_key(calculation_type, context_key)
         if cache_key not in self.calculations:
@@ -514,6 +544,7 @@ class WeightTracker:
                 calculation_type,
                 context=context,
                 context_key=context_key,
+                calculation_overrides=calculation_overrides,
                 stack=stack,
             )
 
@@ -528,6 +559,7 @@ class WeightTracker:
         *,
         context: CalculationContext,
         context_key: tuple | None,
+        calculation_overrides: Mapping[CalcType, Calculation] | None,
         stack: tuple[CalcType, ...],
     ):
         if calculation_type in stack:
@@ -554,6 +586,7 @@ class WeightTracker:
                 dependency,
                 context=context,
                 context_key=context_key,
+                calculation_overrides=calculation_overrides,
                 stack=next_stack,
             )
             for dependency in spec.required_calculations
@@ -633,6 +666,7 @@ class WeightTracker:
         calculation_types: tuple[CalcType, ...],
         *,
         context: CalculationContext | None = None,
+        calculation_overrides: Mapping[CalcType, Calculation] | None = None,
     ) -> dict[CalcType, Calculation]:
         context_key = None
         if context is None:
@@ -646,6 +680,7 @@ class WeightTracker:
                 calculation_type,
                 context=context,
                 context_key=context_key,
+                calculation_overrides=calculation_overrides,
                 stack=(),
             )
         return calculations
@@ -732,6 +767,10 @@ class WeightTracker:
                 Default: False.
             log_compression_rate (bool): Include the "compression_rate" alias,
                 matching "compression". Default: False.
+            baseline_macs_pr_module: Optional 1D raw-MAC vector aligned with
+                the tracker's filtered weighted-module order. When provided,
+                this is used instead of deriving baseline module MACs with
+                fvcore.
 
         UnstructuredBOPs kwargs:
             log_total_bops (bool): Include active and baseline unstructured BOP
@@ -746,6 +785,7 @@ class WeightTracker:
                 Default: False.
             log_compression_rate (bool): Include the "compression_rate" alias,
                 matching "compression". Default: False.
+            baseline_macs_pr_module: Same as StructuredBOPs.
 
         UnstructuredSparsity output:
             "sparsity": Global zero-weight fraction, computed as total zero
@@ -772,6 +812,9 @@ class WeightTracker:
         """
         is_collection = is_tracker_type_collection(tracker_type)
         tracker_types = normalize_tracker_types(tracker_type)
+        baseline_macs_pr_module = kwargs.pop(_BASELINE_MACS_PR_MODULE_KWARG, _MISSING)
+        if baseline_macs_pr_module is not _MISSING:
+            _validate_baseline_macs_pr_module_tracker_types(tracker_types)
 
         if is_collection:
             return [
@@ -779,6 +822,7 @@ class WeightTracker:
                     tracker_type_item,
                     include=include,
                     ignore=ignore,
+                    baseline_macs_pr_module=baseline_macs_pr_module,
                     **kwargs,
                 )
                 for tracker_type_item in tracker_types
@@ -788,6 +832,7 @@ class WeightTracker:
             tracker_types[0],
             include=include,
             ignore=ignore,
+            baseline_macs_pr_module=baseline_macs_pr_module,
             **kwargs,
         )
 
@@ -797,6 +842,7 @@ class WeightTracker:
         *,
         include: Iterable[FilterItem] = (),
         ignore: Iterable[FilterItem] = (),
+        baseline_macs_pr_module=_MISSING,
         **kwargs,
     ):
         tracker_cls = tracker_class_for_type(tracker_type)
@@ -813,13 +859,39 @@ class WeightTracker:
             context=context,
             **kwargs,
         )
+        calculation_overrides = self._calculation_overrides_for_tracker(
+            tracker_type,
+            context=context,
+            baseline_macs_pr_module=baseline_macs_pr_module,
+        )
         calculations = self.ensure_calculations(
             tracker_cls.required_calculations,
             context=context,
+            calculation_overrides=calculation_overrides,
         )
         tracker = tracker_cls(calculations=calculations, **tracker_kwargs)
         self.trackers.append(tracker)
         return tracker
+
+    def _calculation_overrides_for_tracker(
+        self,
+        tracker_type: TrackerType,
+        *,
+        context: CalculationContext | None,
+        baseline_macs_pr_module,
+    ) -> Mapping[CalcType, Calculation] | None:
+        if baseline_macs_pr_module is _MISSING:
+            return None
+
+        if tracker_type not in _BOP_TRACKER_TYPES:
+            _validate_baseline_macs_pr_module_tracker_types((tracker_type,))
+
+        metric_context = context if context is not None else self._calculation_context()
+        baseline_calc = _baseline_macs_pr_module_override_calc(
+            metric_context,
+            baseline_macs_pr_module,
+        )
+        return {CalcType.BASELINE_MACS_PR_MODULE: baseline_calc}
 
     def create_regularizer(
         self,
@@ -988,6 +1060,69 @@ def _expanded_ignored_layers(ignored_layers):
             expanded.append(layer)
 
     return expanded
+
+
+def _validate_baseline_macs_pr_module_tracker_types(
+    tracker_types: Iterable[TrackerType],
+) -> None:
+    unsupported = tuple(
+        tracker_type
+        for tracker_type in tracker_types
+        if tracker_type not in _BOP_TRACKER_TYPES
+    )
+    if not unsupported:
+        return
+
+    supported = ", ".join(tracker_type.value for tracker_type in _BOP_TRACKER_TYPES)
+    unsupported_values = ", ".join(tracker_type.value for tracker_type in unsupported)
+    raise ValueError(
+        f"{_BASELINE_MACS_PR_MODULE_KWARG} is only supported for BOP trackers "
+        f"({supported}). Unsupported tracker(s): {unsupported_values}."
+    )
+
+
+def _baseline_macs_pr_module_override_calc(
+    context: CalculationContext,
+    baseline_macs_pr_module,
+) -> BaselineMacsPrModuleCalc:
+    if baseline_macs_pr_module is None:
+        raise ValueError(f"{_BASELINE_MACS_PR_MODULE_KWARG} cannot be None.")
+
+    try:
+        baseline = torch.as_tensor(
+            baseline_macs_pr_module,
+            dtype=calculation_dtype(context),
+            device=calculation_device(context),
+        )
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            f"{_BASELINE_MACS_PR_MODULE_KWARG} must be a 1D tensor-like raw MAC vector."
+        ) from error
+
+    if baseline.ndim != 1:
+        raise ValueError(
+            f"{_BASELINE_MACS_PR_MODULE_KWARG} must be a 1D tensor-like raw MAC "
+            f"vector; got shape {tuple(baseline.shape)}."
+        )
+
+    expected = len(context.weighted_modules)
+    actual = int(baseline.numel())
+    if actual != expected:
+        module_names = _format_module_names_for_error(context.weighted_module_names)
+        raise ValueError(
+            f"{_BASELINE_MACS_PR_MODULE_KWARG} must provide one value per weighted "
+            f"module in the tracker context. Expected {expected} value(s) for "
+            f"modules: {module_names}; got {actual}."
+        )
+
+    return BaselineMacsPrModuleCalc(baseline)
+
+
+def _format_module_names_for_error(module_names: Iterable[str]) -> str:
+    names = tuple(module_names)
+    if not names:
+        return "<none>"
+    return ", ".join(names)
 
 
 def _normalize_unwrapped_parameters(unwrapped_parameters):

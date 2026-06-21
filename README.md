@@ -242,6 +242,18 @@ print(structured["bops"])
 print(structured["modules"])
 ```
 
+If you already have per-module baseline MACs, pass them when creating the BOP
+tracker. Values are raw MACs, ordered after this tracker's `include`/`ignore`
+filters:
+
+```python
+structured_bops = tracker.create_tracker(
+    TrackerType.STRUCTURED_BOPS,
+    ignore=ignored_layers,
+    baseline_macs_pr_module=baseline_macs,
+)
+```
+
 `create_tracker` accepts a single `TrackerType`/string or a list of tracker
 types/strings:
 
@@ -398,6 +410,9 @@ unstructured = raw_metrics["unstructured_bops"]
 print(unstructured["bops"])
 print(unstructured["modules"])
 ```
+
+`baseline_macs_pr_module` is also supported here and follows the same filtered
+weighted-module order as `STRUCTURED_BOPS`.
 
 For each weighted module $m$:
 

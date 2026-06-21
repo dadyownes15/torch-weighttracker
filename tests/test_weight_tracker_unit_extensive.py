@@ -223,6 +223,36 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
     assert tracker.trackers == [structured_bops]
 
 
+def test_structured_bops_accepts_baseline_macs_pr_module_override() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(model, groups)
+
+    metrics = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        baseline_macs_pr_module=torch.tensor([10.0, 20.0]),
+        log_total_bops=True,
+        log_layerwise_stats=True,
+    ).track()["structured_bops"]
+
+    _assert_metric_close(metrics["bops"], torch.tensor(320.0))
+    _assert_metric_close(metrics["baseline"], torch.tensor(30720.0))
+    _assert_metric_close(metrics["compression"], torch.tensor(1.0 - 320.0 / 30720.0))
+    _assert_tensor_dict_close(
+        _module_metric(metrics, "bops"),
+        {"fc1": torch.tensor(320.0 / 3.0), "fc2": torch.tensor(640.0 / 3.0)},
+    )
+    _assert_tensor_dict_close(
+        _module_metric(metrics, "baseline"),
+        {"fc1": torch.tensor(10240.0), "fc2": torch.tensor(20480.0)},
+    )
+
+    with pytest.raises(ValueError, match="requires example_inputs"):
+        tracker.get_calculation(CalcType.BASELINE_MACS_PR_MODULE)
+
+
 def test_create_tracker_wires_unstructured_bops_from_required_calculations() -> None:
     model, groups = _model_and_groups()
     model.fc1.activation_bitrate = 8
@@ -244,6 +274,78 @@ def test_create_tracker_wires_unstructured_bops_from_required_calculations() -> 
         torch.tensor(1.0 - 80.0 / 9216.0),
     )
     assert tracker.trackers == [unstructured_bops]
+
+
+def test_unstructured_bops_accepts_baseline_macs_pr_module_override() -> None:
+    model, groups = _model_and_groups()
+    model.fc1.activation_bitrate = 8
+    model.fc1.weight_bitrate = 2
+    model.fc2.bitrate = 4
+    tracker = _tracker_from_groups(model, groups)
+
+    metrics = tracker.create_tracker(
+        TrackerType.UNSTRUCTURED_BOPS,
+        baseline_macs_pr_module=[10.0, 20.0],
+        log_total_bops=True,
+        log_layerwise_stats=True,
+    ).track()["unstructured_bops"]
+
+    expected_bops = torch.tensor(880.0 / 3.0)
+    _assert_metric_close(metrics["bops"], expected_bops)
+    _assert_metric_close(metrics["baseline"], torch.tensor(30720.0))
+    _assert_metric_close(metrics["compression"], 1.0 - expected_bops / 30720.0)
+    _assert_tensor_dict_close(
+        _module_metric(metrics, "bops"),
+        {"fc1": torch.tensor(80.0), "fc2": torch.tensor(640.0 / 3.0)},
+    )
+    _assert_tensor_dict_close(
+        _module_metric(metrics, "baseline"),
+        {"fc1": torch.tensor(10240.0), "fc2": torch.tensor(20480.0)},
+    )
+
+
+def test_bops_baseline_macs_pr_module_override_validates_filtered_length() -> None:
+    model, groups = _model_and_groups()
+    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+
+    with pytest.raises(ValueError) as exc_info:
+        tracker.create_tracker(
+            TrackerType.STRUCTURED_BOPS,
+            ignore=[model.fc2],
+            baseline_macs_pr_module=torch.tensor([10.0, 20.0]),
+        )
+
+    message = str(exc_info.value)
+    assert "baseline_macs_pr_module" in message
+    assert "Expected 1 value(s)" in message
+    assert "fc1" in message
+    assert "got 2" in message
+
+
+def test_baseline_macs_pr_module_override_is_rejected_for_non_bops_tracker() -> None:
+    model, groups = _model_and_groups()
+    tracker = _tracker_from_groups(model, groups)
+
+    with pytest.raises(ValueError, match="only supported for BOP trackers"):
+        tracker.create_tracker(
+            TrackerType.UNSTRUCTURED_SPARSITY,
+            baseline_macs_pr_module=torch.tensor([10.0, 20.0]),
+        )
+
+    assert tracker.trackers == []
+
+
+def test_baseline_macs_pr_module_override_rejects_mixed_tracker_lists() -> None:
+    model, groups = _model_and_groups()
+    tracker = _tracker_from_groups(model, groups)
+
+    with pytest.raises(ValueError, match="Unsupported tracker"):
+        tracker.create_tracker(
+            [TrackerType.STRUCTURED_BOPS, TrackerType.UNSTRUCTURED_SPARSITY],
+            baseline_macs_pr_module=torch.tensor([10.0, 20.0]),
+        )
+
+    assert tracker.trackers == []
 
 
 @pytest.mark.parametrize(
@@ -347,9 +449,7 @@ def test_weight_tracker_track_merges_wandb_formatted_tracker_metrics() -> None:
     assert "unstructured_sparsity/sparsity" in metrics
     assert "unstructured_sparsity/layers/fc1" in metrics
     assert "group_pruning_summary/pruned_units" in metrics
-    assert (
-        "group_pruning_summary/groups/fc1:prune_out_channels/pruned_units" in metrics
-    )
+    assert "group_pruning_summary/groups/fc1:prune_out_channels/pruned_units" in metrics
 
 
 def test_invalid_tracker_type_lists_available_tracker_values() -> None:

@@ -32,6 +32,7 @@ class StructuredBOPs(BaseTracker):
         log_layerwise_stats: bool = False,
         convert_tensors: bool = True,
         wandb_format: bool = False,
+        normalization_macs_pr_module=None,
         _module_names: Iterable[str] = (),
     ) -> None:
         super().__init__(
@@ -43,6 +44,7 @@ class StructuredBOPs(BaseTracker):
         self.log_compression_rate = log_compression_rate
         self.log_total_bops = log_total_bops
         self.log_layerwise_stats = log_layerwise_stats
+        self.normalization_macs_pr_module = normalization_macs_pr_module
         self.module_names = tuple(_module_names)
 
     @classmethod
@@ -139,7 +141,41 @@ class StructuredBOPs(BaseTracker):
 
     def _baseline_bops_pr_module(self):
         baseline_macs = self.calc(CalcType.BASELINE_MACS_PR_MODULE)()
+        if self.normalization_macs_pr_module is not None:
+            baseline_macs = _normalization_macs_pr_module(
+                self.normalization_macs_pr_module,
+                baseline_macs,
+            )
         return baseline_macs * (32 * 32)
+
+
+def _normalization_macs_pr_module(value, reference: torch.Tensor) -> torch.Tensor:
+    try:
+        normalization = torch.as_tensor(
+            value,
+            dtype=reference.dtype,
+            device=reference.device,
+        )
+    except (TypeError, ValueError) as error:
+        raise TypeError(
+            "normalization_macs_pr_module must be a 1D tensor-like raw MAC vector."
+        ) from error
+
+    if normalization.ndim != 1:
+        raise ValueError(
+            "normalization_macs_pr_module must be a 1D tensor-like raw MAC "
+            f"vector; got shape {tuple(normalization.shape)}."
+        )
+
+    expected = int(reference.numel())
+    actual = int(normalization.numel())
+    if actual != expected:
+        raise ValueError(
+            "normalization_macs_pr_module must provide one value per weighted "
+            f"module. Expected {expected}; got {actual}."
+        )
+
+    return normalization
 
 
 def _compression_rate(active: torch.Tensor, baseline: torch.Tensor) -> torch.Tensor:

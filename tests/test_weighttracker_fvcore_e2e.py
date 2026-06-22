@@ -750,6 +750,76 @@ def test_transformer_mlp_prune_axis_counts_match_pruned_fvcore_modules() -> None
     assert by_module["head"] == _linear_flops(model.head, leading_elements=1)
 
 
+def test_structured_bops_physical_prune_uses_original_normalization() -> None:
+    model = TinyTransformerClassifier().eval()
+    token_ids = torch.randint(0, 32, (1, 8))
+    tracker = WeightTracker(
+        model,
+        example_inputs=token_ids,
+        root_module_types=[nn.Linear],
+    )
+    pre_prune_structured_bops = tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        include=[model.mlp_in, model.mlp_out, model.head],
+        log_total_bops=True,
+        convert_tensors=False,
+    )
+    pre_prune_metrics = pre_prune_structured_bops.track()["structured_bops"]
+    original_dense_macs = (
+        pre_prune_structured_bops.calc(CalcType.BASELINE_MACS_PR_MODULE)
+        .forward()
+        .detach()
+        .clone()
+    )
+
+    group = _group_containing(tracker, "mlp_in", prune_linear_out_channels)
+    _prune_group(group, (0, 7, 31))
+
+    post_prune_tracker = WeightTracker(
+        model,
+        example_inputs=token_ids,
+        root_module_types=[nn.Linear],
+    )
+    current_structured_bops = post_prune_tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        include=[model.mlp_in, model.mlp_out, model.head],
+        log_total_bops=True,
+        log_layerwise_stats=True,
+        log_module_names=True,
+        convert_tensors=False,
+    )
+    normalized_structured_bops = post_prune_tracker.create_tracker(
+        TrackerType.STRUCTURED_BOPS,
+        include=[model.mlp_in, model.mlp_out, model.head],
+        normalization_macs_pr_module=original_dense_macs,
+        log_total_bops=True,
+        log_layerwise_stats=True,
+        log_module_names=True,
+        convert_tensors=False,
+    )
+
+    current_metrics = current_structured_bops.track()["structured_bops"]
+    normalized_metrics = normalized_structured_bops.track()["structured_bops"]
+    original_baseline = original_dense_macs * (32 * 32)
+
+    torch.testing.assert_close(normalized_metrics["bops"], current_metrics["bops"])
+    assert float(normalized_metrics["bops"]) < float(pre_prune_metrics["bops"])
+    assert float(current_metrics["baseline"]) < float(normalized_metrics["baseline"])
+    torch.testing.assert_close(
+        normalized_metrics["baseline"],
+        original_baseline.sum(),
+    )
+    torch.testing.assert_close(
+        normalized_metrics["compression"],
+        1.0 - normalized_metrics["bops"] / original_baseline.sum(),
+    )
+    _assert_named_tensor_values_close(
+        _module_metric(normalized_metrics, "baseline"),
+        tuple(normalized_metrics["module_names"]),
+        original_baseline,
+    )
+
+
 def test_rmsnorm_has_feature_axes_and_zero_weighted_macs() -> None:
     model = TinyRMSNormLinear().eval()
     example_inputs = torch.randn(1, 4, 8)

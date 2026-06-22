@@ -16,6 +16,7 @@ from torch_weighttracker.trackers.bops_filter import (
 from torch_weighttracker.trackers.structured_bops import (
     _add_module_metric,
     _compression_rate,
+    _normalization_macs_pr_module,
 )
 from torch_weighttracker.trackers.unstructured_sparsity import _safe_fraction
 
@@ -38,6 +39,7 @@ class UnstructuredBOPs(BaseTracker):
         log_layerwise_stats: bool = False,
         convert_tensors: bool = True,
         wandb_format: bool = False,
+        normalization_macs_pr_module=None,
         _module_names: Iterable[str] = (),
     ) -> None:
         super().__init__(
@@ -49,6 +51,7 @@ class UnstructuredBOPs(BaseTracker):
         self.log_compression_rate = log_compression_rate
         self.log_total_bops = log_total_bops
         self.log_layerwise_stats = log_layerwise_stats
+        self.normalization_macs_pr_module = normalization_macs_pr_module
         self.module_names = tuple(_module_names)
 
     @classmethod
@@ -146,4 +149,9 @@ class UnstructuredBOPs(BaseTracker):
 
     def _baseline_bops_pr_module(self):
         baseline_macs = self.calc(CalcType.BASELINE_MACS_PR_MODULE)()
+        if self.normalization_macs_pr_module is not None:
+            baseline_macs = _normalization_macs_pr_module(
+                self.normalization_macs_pr_module,
+                baseline_macs,
+            )
         return baseline_macs * (32 * 32)

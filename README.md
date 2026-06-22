@@ -249,15 +249,17 @@ print(structured["bops"])
 print(structured["modules"])
 ```
 
-If you already have per-module baseline MACs, pass them when creating the BOP
-tracker. Values are raw MACs, ordered after this tracker's `include`/`ignore`
-filters:
+If you want to report compression against an earlier model, pass that
+per-module dense MAC vector when creating the BOP tracker. Values are raw MACs,
+ordered after this tracker's `include`/`ignore` filters. This only changes
+metric normalization and logged baselines; active BOPs still come from the
+current model:
 
 ```python
 structured_bops = tracker.create_tracker(
     TrackerType.STRUCTURED_BOPS,
     ignore=ignored_layers,
-    baseline_macs_pr_module=baseline_macs,
+    normalization_macs_pr_module=original_dense_macs,
 )
 ```
 
@@ -418,8 +420,8 @@ print(unstructured["bops"])
 print(unstructured["modules"])
 ```
 
-`baseline_macs_pr_module` is also supported here and follows the same filtered
-weighted-module order as `STRUCTURED_BOPS`.
+`normalization_macs_pr_module` is also supported here and follows the same
+filtered weighted-module order as `STRUCTURED_BOPS`.
 
 For each weighted module $m$:
 

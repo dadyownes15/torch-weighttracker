@@ -106,10 +106,13 @@ class DependencyGraph(object):
         self.ignored_params = ignored_params if ignored_params is not None else []
 
         # Ignore all sub-modules of customized layers since they will be handled by the customized pruner
-        for layer_type_or_instance in self.CUSTOMIZED_PRUNERS.keys():            
+        for layer_type_or_instance in self.CUSTOMIZED_PRUNERS.keys():
             for m in self.model.modules():
                 # check if the module is the target layer or a instance of the layer type
-                if (m==layer_type_or_instance) or (not isinstance(layer_type_or_instance, torch.nn.Module) and isinstance(m, layer_type_or_instance)):
+                if (m == layer_type_or_instance) or (
+                    isinstance(layer_type_or_instance, type)
+                    and isinstance(m, layer_type_or_instance)
+                ):
                     for sub_module in m.modules(): 
                         if sub_module != m:
                             self.IGNORED_LAYERS_IN_TRACING.append(sub_module)
@@ -327,7 +330,9 @@ class DependencyGraph(object):
 
     def get_pruner_of_module(self, module: nn.Module):
         """Get the pruner for a specific module."""
-        p = self.CUSTOMIZED_PRUNERS.get(module.__class__, None) # customized pruners for a specific layer type
+        p = self.CUSTOMIZED_PRUNERS.get(module, None) # customized pruners for a specific layer instance
+        if p is None:
+            p = self.CUSTOMIZED_PRUNERS.get(module.__class__, None) # customized pruners for a specific layer type
         if p is None:
             p = self.REGISTERED_PRUNERS.get(ops.module2type(module), None) # standard pruners
         return p
@@ -455,12 +460,26 @@ class DependencyGraph(object):
             
 
         # Register hooks for prunable modules
+        customized_type_keys = tuple(
+            key for key in self.CUSTOMIZED_PRUNERS.keys() if isinstance(key, type)
+        )
+        customized_instance_keys = tuple(
+            key
+            for key in self.CUSTOMIZED_PRUNERS.keys()
+            if isinstance(key, nn.Module)
+        )
         registered_types = tuple(ops.type2class(
-            t) for t in self.REGISTERED_PRUNERS.keys()) + tuple(self.CUSTOMIZED_PRUNERS.keys())
+            t) for t in self.REGISTERED_PRUNERS.keys()) + customized_type_keys
         hooks = [
             m.register_forward_hook(_record_grad_fn)
             for m in model.modules()
-            if (isinstance(m, registered_types) and m not in self.IGNORED_LAYERS_IN_TRACING)
+            if (
+                (
+                    isinstance(m, registered_types)
+                    or m in customized_instance_keys
+                )
+                and m not in self.IGNORED_LAYERS_IN_TRACING
+            )
         ]
 
         # Forward the model and record all modules
@@ -568,7 +587,8 @@ class DependencyGraph(object):
                     name=self._module2name.get(module, None),
                 )
                 if (
-                    type(module) in self.CUSTOMIZED_PRUNERS
+                    module in self.CUSTOMIZED_PRUNERS
+                    or type(module) in self.CUSTOMIZED_PRUNERS
                 ):  # mark it as a customized layer
                     node.type = ops.OPTYPE.CUSTOMIZED
                 module2node[module] = node

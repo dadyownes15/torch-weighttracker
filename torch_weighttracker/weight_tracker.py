@@ -176,6 +176,7 @@ class WeightTracker:
             num_heads=self.num_heads,
             prune_dim=self.prune_dim,
             prune_num_heads=self.prune_num_heads,
+            customized_pruners=self.customized_pruners,
         )
 
     def _uses_attention_view(self) -> bool:

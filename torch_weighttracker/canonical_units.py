@@ -128,6 +128,7 @@ def canonicalize_groups(
     num_heads: dict[nn.Module, int] | None = None,
     prune_dim: bool | None = None,
     prune_num_heads: bool = False,
+    customized_pruners: dict[object, object] | None = None,
 ) -> tuple[CanonicalUnitGroup, ...]:
     if prune_dim and prune_num_heads:
         raise ValueError("prune_dim and prune_num_heads cannot both be enabled.")
@@ -140,7 +141,6 @@ def canonicalize_groups(
         items = tuple(group_items(group))
         if len(items) == 0:
             continue
-
         attention = attention_unit_config(
             items,
             num_heads=num_heads,
@@ -165,6 +165,7 @@ def canonicalize_groups(
                 group_length=group_length,
                 root_to_position=root_to_position,
                 attention=attention,
+                customized_pruners=customized_pruners,
             )
             for member in items
         )
@@ -224,6 +225,7 @@ def canonical_member_for_raw_member(
     group_length: int,
     root_to_position: dict[int, int],
     attention: AttentionUnitConfig | None,
+    customized_pruners: dict[object, object] | None = None,
 ) -> CanonicalMember | None:
     module = member.dep.target.module
     handler = member.dep.handler
@@ -260,7 +262,11 @@ def canonical_member_for_raw_member(
         root_to_position=root_to_position,
         attention=attention,
     )
-    unit_axis = unit_axis_for_plain_member(module, handler)
+    unit_axis = unit_axis_for_plain_member(
+        module,
+        handler,
+        customized_pruners=customized_pruners,
+    )
     if unit_axis is None:
         return None
 
@@ -449,7 +455,20 @@ def qkv_source_layout_for_member(
     return None
 
 
-def unit_axis_for_plain_member(module: nn.Module, handler) -> UnitAxis | None:
+def unit_axis_for_plain_member(
+    module: nn.Module,
+    handler,
+    *,
+    customized_pruners: dict[object, object] | None = None,
+) -> UnitAxis | None:
+    custom_axis = custom_unit_axis_for_plain_member(
+        module,
+        handler,
+        customized_pruners=customized_pruners,
+    )
+    if custom_axis is not None:
+        return custom_axis
+
     if isinstance(module, nn.Linear):
         if handler == prune_linear_out_channels:
             return UnitAxis.OUT_CHANNEL
@@ -475,6 +494,59 @@ def unit_axis_for_plain_member(module: nn.Module, handler) -> UnitAxis | None:
         return UnitAxis.FEATURE
 
     return None
+
+
+def custom_unit_axis_for_plain_member(
+    module: nn.Module,
+    handler,
+    *,
+    customized_pruners: dict[object, object] | None,
+) -> UnitAxis | None:
+    if not isinstance(module, (nn.Linear, nn.Conv2d)):
+        return None
+
+    custom_pruner = custom_pruner_for_module(module, customized_pruners)
+    if custom_pruner is None:
+        return None
+
+    is_out = same_method(handler, custom_pruner.prune_out_channels)
+    is_in = same_method(handler, custom_pruner.prune_in_channels)
+
+    if is_out and not is_in:
+        return UnitAxis.OUT_CHANNEL
+    if is_in and not is_out:
+        return UnitAxis.IN_CHANNEL
+    return None
+
+
+def custom_pruner_for_module(
+    module: nn.Module,
+    customized_pruners: dict[object, object] | None,
+):
+    if not customized_pruners:
+        return None
+
+    custom_pruner = customized_pruners.get(module)
+    if custom_pruner is not None:
+        return custom_pruner
+    return customized_pruners.get(module.__class__)
+
+
+def same_method(left, right) -> bool:
+    if left == right:
+        return True
+
+    left_self = getattr(left, "__self__", None)
+    right_self = getattr(right, "__self__", None)
+    left_func = getattr(left, "__func__", None)
+    right_func = getattr(right, "__func__", None)
+
+    return (
+        left_self is not None
+        and left_self is right_self
+        and left_func is not None
+        and left_func is right_func
+    )
 
 
 def pruning_indices_by_unit_for_attention(

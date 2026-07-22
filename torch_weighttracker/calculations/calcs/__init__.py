@@ -72,6 +72,11 @@ from torch_weighttracker.calculations.calcs.unstructured_sparsity_pr_module impo
     create_unstructured_sparsity_pr_module_calc,
 )
 
+from .prunable_bias_param_pr_unit_pr_group import (
+    PrunableBiasParamPrUnitPrGroup,
+    create_prunable_bias_param_pr_unit_pr_group_calc,
+)
+
 __all__ = [
     "ActiveMacsPrModuleCalc",
     "InitialUnitCountPrGroup",
@@ -81,6 +86,7 @@ __all__ = [
     "BaselineParamPrUnitPrGroup",
     "ModuleAxisCostIndicesCalc",
     "ParamPrUnit",
+    "PrunableBiasParamPrUnitPrGroup",
     "Block24SparsityCalc",
     "UnitPrGroup",
     "UnitActiveMaskCalc",
@@ -99,6 +105,7 @@ __all__ = [
     "create_l2_norm_pr_unit_calc",
     "create_module_axis_cost_indices_calc",
     "create_param_pr_unit_calc",
+    "create_prunable_bias_param_pr_unit_pr_group_calc",
     "create_block_2_4_sparsity_calc",
     "create_structured_unit_sum_calc",
     "create_unit_active_mask_calc",

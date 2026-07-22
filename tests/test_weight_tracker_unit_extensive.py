@@ -540,6 +540,8 @@ def test_group_pruning_summary_reports_nested_unit_and_param_counts() -> None:
     assert set(metrics) == {
         "pruned_units",
         "pruned_params",
+        "pruned_bias_params",
+        "pruned_physical_params",
         "groups",
     }
     assert set(metrics["groups"]) == {

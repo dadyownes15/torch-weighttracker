@@ -26,6 +26,7 @@ class CalcType(str, Enum):
     GROUP_CHANGE_EFFECT = "group_change_effect"
     GROUP_UNIT_PARAM_CHANGE = "group_unit_param_change"
     BASELINE_PARAM_PR_UNIT_PR_GROUP = "baseline_param_pr_unit_pr_group"
+    PRUNABLE_BIAS_PARAM_PR_UNIT_PR_GROUP = "prunable_bias_param_pr_unit_pr_group"
     PARAM_PR_UNIT = "param_pr_unit"
     GROUP_SIZES = "group_sizes"
     INIT_UNIT_PR_GROUP_COUNT = "baseline_group_sizes"

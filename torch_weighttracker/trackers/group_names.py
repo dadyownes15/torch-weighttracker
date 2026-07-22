@@ -12,16 +12,18 @@ def group_names(owner, groups: Iterable[CanonicalUnitGroup]) -> tuple[str, ...]:
     counts = Counter(base_names)
 
     return tuple(
-        (
-            base_name
-            if counts[base_name] == 1
-            else f"{base_name}#{group.group_id}"
-        )
+        (base_name if counts[base_name] == 1 else f"{base_name}#{group.group_id}")
         for base_name, group in zip(base_names, groups, strict=True)
     )
 
 
 def _base_group_name(owner, group: CanonicalUnitGroup) -> str:
+    if group.attention_spec is not None:
+        module_name = owner._module_names_for_modules(
+            (group.attention_spec.attention_module,)
+        )[0]
+        return f"{module_name}:prune_heads:{UnitKind.HEAD.value}"
+
     if len(group.members) == 0:
         return f"group_{group.group_id}"
 

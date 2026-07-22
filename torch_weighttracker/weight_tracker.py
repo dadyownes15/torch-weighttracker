@@ -18,6 +18,7 @@ from torch_weighttracker.calculations.context import (
 from torch_weighttracker.canonical_units import (
     CanonicalMember,
     CanonicalUnitGroup,
+    SeparateQKVAttentionSpec,
     UnitKind,
     canonicalize_groups,
 )
@@ -114,6 +115,8 @@ class WeightTracker:
         device=None,
         dtype=None,
         post_prune_hooks: Iterable[Callable[["WeightTracker"], None]] = (),
+        attention_specs: Iterable[SeparateQKVAttentionSpec] = (),
+        canonical_group_filter: Callable[[CanonicalUnitGroup], bool] | None = None,
     ) -> None:
         self.model = model
         self.device = device
@@ -129,6 +132,10 @@ class WeightTracker:
         )
         self.customized_pruners = customized_pruners
         self.post_prune_hooks = tuple(post_prune_hooks)
+        self.attention_specs = tuple(attention_specs)
+        if canonical_group_filter is not None and not callable(canonical_group_filter):
+            raise TypeError("canonical_group_filter must be callable or None.")
+        self.canonical_group_filter = canonical_group_filter
         self.dependency_graph = None
 
         self.ignored_params = [] if ignored_params is None else list(ignored_params)
@@ -177,6 +184,8 @@ class WeightTracker:
             prune_dim=self.prune_dim,
             prune_num_heads=self.prune_num_heads,
             customized_pruners=self.customized_pruners,
+            attention_specs=self.attention_specs,
+            canonical_group_filter=self.canonical_group_filter,
         )
 
     def _uses_attention_view(self) -> bool:
@@ -198,6 +207,11 @@ class WeightTracker:
                 f"unit_id {unit_id} is outside canonical group {group_id} "
                 f"length {group.length}."
             )
+        if group.attention_spec is not None:
+            raise ValueError(
+                "get_prune_unit exposes Torch-Pruning groups only. Use prune_unit "
+                "for callback-backed attention heads."
+            )
 
         pruning_idxs = self._pruning_indices_for_unit(group_id, unit_id)
 
@@ -205,9 +219,17 @@ class WeightTracker:
         return pruning_group, pruning_idxs
 
     def prune_unit(self, group_id: int, unit_id: int) -> PruneUnitResult:
-        pruning_group, pruning_idxs = self.get_prune_unit(group_id, unit_id)
-        self._prepare_group_for_physical_prune(group_id, (unit_id,))
-        pruning_group.prune()
+        group = self.canonical_groups[group_id]
+        pruning_idxs = self._pruning_indices_for_unit(group_id, unit_id)
+        if group.attention_spec is not None:
+            self._prune_attention_group(group, (unit_id,))
+        else:
+            pruning_group = self._get_pruning_group_for_indices(
+                group_id,
+                pruning_idxs,
+            )
+            self._prepare_group_for_physical_prune(group_id, (unit_id,))
+            pruning_group.prune()
         result = PruneUnitResult(
             group_id=group_id,
             unit_id=unit_id,
@@ -340,6 +362,7 @@ class WeightTracker:
         events: list[PruneUnitResult] = []
         pruned_units = 0
         for zero_group in view.groups:
+            group = self.canonical_groups[zero_group.group_id]
             pruning_idxs = tuple(
                 sorted(
                     {
@@ -349,21 +372,30 @@ class WeightTracker:
                     }
                 )
             )
-            pruning_group = self._get_pruning_group_for_indices(
-                zero_group.group_id,
-                pruning_idxs,
-            )
-            if self._pruning_group_touches_ignore_prune_module(
-                pruning_group,
-                prune_filter,
-            ):
-                continue
+            unit_ids = tuple(zero_unit.unit_id for zero_unit in zero_group.zero_units)
+            if group.attention_spec is not None:
+                if self._attention_group_touches_ignore_prune_module(
+                    group,
+                    prune_filter,
+                ):
+                    continue
+                self._prune_attention_group(group, unit_ids)
+            else:
+                pruning_group = self._get_pruning_group_for_indices(
+                    zero_group.group_id,
+                    pruning_idxs,
+                )
+                if self._pruning_group_touches_ignore_prune_module(
+                    pruning_group,
+                    prune_filter,
+                ):
+                    continue
 
-            self._prepare_group_for_physical_prune(
-                zero_group.group_id,
-                tuple(zero_unit.unit_id for zero_unit in zero_group.zero_units),
-            )
-            pruning_group.prune()
+                self._prepare_group_for_physical_prune(
+                    zero_group.group_id,
+                    unit_ids,
+                )
+                pruning_group.prune()
             pruned_units += len(zero_group.zero_units)
             events.extend(
                 PruneUnitResult(
@@ -435,10 +467,37 @@ class WeightTracker:
         if not filters:
             return False
 
-        return any(
-            not filters.allows(dep.target.module)
-            for dep, _ in pruning_group
+        return any(not filters.allows(dep.target.module) for dep, _ in pruning_group)
+
+    def _attention_group_touches_ignore_prune_module(
+        self,
+        group: CanonicalUnitGroup,
+        filters: ConsumerFilter,
+    ) -> bool:
+        if not filters or group.attention_spec is None:
+            return False
+
+        modules = (
+            group.attention_spec.attention_module,
+            *group.attention_spec.projections,
         )
+        return any(not filters.allows(module) for module in modules)
+
+    def _prune_attention_group(
+        self,
+        group: CanonicalUnitGroup,
+        unit_ids: Iterable[int],
+    ) -> None:
+        spec = group.attention_spec
+        if spec is None:
+            raise ValueError("Canonical group is not callback-backed attention.")
+
+        positions = tuple(sorted({int(unit_id) for unit_id in unit_ids}))
+        if not positions:
+            return
+        if positions[0] < 0 or positions[-1] >= int(group.length):
+            raise IndexError("Attention head position is outside the group length.")
+        spec.prune_heads(spec.attention_module, positions)
 
     def _prepare_group_for_physical_prune(
         self,
@@ -804,8 +863,10 @@ class WeightTracker:
 
         GroupPruningSummary output:
             "pruned_units": Total pruned canonical units.
-            "pruned_params": Total group-attributed pruned parameter footprint.
-            "groups": Per-group pruned unit and parameter counts.
+            "pruned_params": Weight-only group-attributed pruned footprint.
+            "pruned_bias_params": Reporting-only removable bias footprint.
+            "pruned_physical_params": Sum of pruned weights and removable biases.
+            "groups": Equivalent values for each canonical group.
         """
         is_collection = is_tracker_type_collection(tracker_type)
         tracker_types = normalize_tracker_types(tracker_type)
@@ -1226,6 +1287,11 @@ def _canonical_group_key(group: CanonicalUnitGroup) -> tuple:
         group.offset,
         group.length,
         group.unit_kind,
+        (
+            None
+            if group.attention_spec is None
+            else id(group.attention_spec.attention_module)
+        ),
         tuple(_canonical_member_key(member) for member in group.members),
     )
 

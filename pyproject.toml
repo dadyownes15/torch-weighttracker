@@ -34,11 +34,16 @@ structured-bops = [
 dev = [
     "build>=1.2",
     "fvcore",
+    "ipykernel>=6.29",
+    "matplotlib>=3.8",
+    "nbclient>=0.10",
+    "nbformat>=5.10",
     "pytest>=8.0",
     "ruff>=0.6",
     "timm>=1.0",
     "torchvision>=0.15",
     "twine>=5.0",
+    "transformers>=4.44,<5",
 ]
 dev-local = [
     "fvcore",

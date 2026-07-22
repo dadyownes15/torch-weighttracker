@@ -22,6 +22,7 @@ class GroupPruningSummary(BaseTracker):
         CalcType.INIT_UNIT_PR_GROUP_COUNT,
         CalcType.BASELINE_PARAM_PR_UNIT_PR_GROUP,
         CalcType.GROUP_UNIT_PARAM_CHANGE,
+        CalcType.PRUNABLE_BIAS_PARAM_PR_UNIT_PR_GROUP,
     )
 
     def __init__(
@@ -76,7 +77,7 @@ class GroupPruningSummary(BaseTracker):
             "_group_names": group_names(owner, name_groups),
         }
 
-    def compute(self) -> tuple[torch.Tensor, torch.Tensor]:
+    def compute(self) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         active_mask = self.compute_calculation(CalcType.UNIT_ACTIVE_MASK)
         active_units = self.compute_calculation(CalcType.UNITS_TO_GROUP, active_mask)
         baseline_units = self.compute_calculation(CalcType.INIT_UNIT_PR_GROUP_COUNT)
@@ -94,26 +95,37 @@ class GroupPruningSummary(BaseTracker):
             baseline_units * baseline_param_pr_unit
             - active_units * active_param_pr_unit
         )
+        prunable_bias_param_pr_unit = self.compute_calculation(
+            CalcType.PRUNABLE_BIAS_PARAM_PR_UNIT_PR_GROUP
+        )
+        pruned_bias_params = pruned_units * prunable_bias_param_pr_unit
 
-        return pruned_units, pruned_params
+        return pruned_units, pruned_params, pruned_bias_params
 
-    def toMetric(self, result: tuple[torch.Tensor, torch.Tensor]):
-        pruned_units, pruned_params = result
+    def toMetric(self, result: tuple[torch.Tensor, torch.Tensor, torch.Tensor]):
+        pruned_units, pruned_params, pruned_bias_params = result
+        pruned_physical_params = pruned_params + pruned_bias_params
         metrics = {
             "pruned_units": pruned_units.sum(),
             "pruned_params": pruned_params.sum(),
+            "pruned_bias_params": pruned_bias_params.sum(),
+            "pruned_physical_params": pruned_physical_params.sum(),
             "groups": {},
         }
 
-        for name, units, params in zip(
+        for name, units, params, bias_params, physical_params in zip(
             self.group_names,
             pruned_units,
             pruned_params,
+            pruned_bias_params,
+            pruned_physical_params,
             strict=True,
         ):
             metrics["groups"][name] = {
                 "pruned_units": units,
                 "pruned_params": params,
+                "pruned_bias_params": bias_params,
+                "pruned_physical_params": physical_params,
             }
 
         return metrics

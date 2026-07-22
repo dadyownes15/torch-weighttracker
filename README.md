@@ -201,6 +201,51 @@ For timm ViTs, head pruning removes complete q/k/v head slices from the fused
 keeps `num_heads`, `attn_dim`, `head_dim`, and `scale` consistent with the new
 shape so the pruned model can still run a forward pass.
 
+## Hugging Face BERT Heads and FFN Neurons
+
+The optional BERT adapter keeps encoder self-attention heads and intermediate
+FFN neurons as the only canonical units. Shared hidden-width groups and the QA
+head are excluded from tracking, regularization, zero detection, and pruning.
+Transformers remains a development-only dependency; applications can install a
+compatible v4 release separately.
+
+```python
+from torch_weighttracker import WeightTracker
+from torch_weighttracker.integrations.transformers import bert_pruning_config
+
+tracker = WeightTracker(
+    model,
+    example_inputs=(input_ids, attention_mask, token_type_ids),
+    **bert_pruning_config(model),
+)
+
+# Head groups use Hugging Face's model-level callback. FFN groups continue to
+# use Torch-Pruning. Both paths rebuild tracker state after physical pruning.
+tracker.fake_prune_unit(group_id=0, unit_id=1)
+tracker.prune_zero_structures()
+```
+
+`SeparateQKVAttentionSpec` is the framework-neutral API behind the adapter. Its
+callback receives positions in the currently compact layer; an integration is
+responsible for mapping those positions to any framework-specific stable IDs.
+`ignore_prune` protects both the owning attention module and every constituent
+Q/K/V/output projection.
+
+The BERT adapter requires the model-level `prune_heads` API available in
+Transformers v4. Transformers v5 removed head pruning, so the adapter fails with
+a clear compatibility error instead of providing a version-specific compactor.
+
+`group_pruning_summary` preserves the weight-only meaning of `pruned_params` and
+adds `pruned_bias_params` plus their sum, `pruned_physical_params`, both globally
+and per group. Biases do not affect `PARAM_PR_UNIT`, L2, or GroupLasso.
+
+The deterministic proof notebook is
+`sanity_checks/bert_pruning_playground.ipynb`. It reports group membership, L2
+and active-unit heatmaps, shape and physical-parameter changes, weighted-layer
+MAC/BOP changes, unsupported-operation warnings, and fake-versus-compact logit
+parity. Its BOP totals are explicitly weighted-layer estimates when attention
+score operations fall outside fvcore coverage.
+
 
 ## Group Lasso
 

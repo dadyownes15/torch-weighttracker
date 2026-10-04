@@ -38,6 +38,9 @@ class IdentityTensorReduction:
     def identity_key(self) -> Hashable:
         return (type(self),)
 
+    def elementwise_affine(self) -> tuple[float, float]:
+        return 1.0, 0.0
+
 
 class ReductionOp(nn.Module):
     def __init__(

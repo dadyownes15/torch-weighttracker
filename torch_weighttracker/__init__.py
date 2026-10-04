@@ -1,6 +1,11 @@
 from importlib.metadata import PackageNotFoundError, version
 
 from torch_weighttracker.canonical_units import SeparateQKVAttentionSpec
+from torch_weighttracker.reductions.backend import (
+    ReductionBackend,
+    use_reduction_backend,
+)
+from torch_weighttracker.reductions.sparse import SparseReductionFallbackWarning
 from torch_weighttracker.weight_tracker import (
     FakePruneUnitResult,
     PruneUnitResult,
@@ -10,8 +15,11 @@ from torch_weighttracker.weight_tracker import (
 __all__ = [
     "FakePruneUnitResult",
     "PruneUnitResult",
+    "ReductionBackend",
     "SeparateQKVAttentionSpec",
+    "SparseReductionFallbackWarning",
     "WeightTracker",
+    "use_reduction_backend",
 ]
 
 try:

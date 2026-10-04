@@ -1,0 +1,116 @@
+[
+  {
+    "model": "resnet20",
+    "device": "cuda",
+    "device_name": "NVIDIA GeForce RTX 3060",
+    "torch": "2.12.1+cu130",
+    "params": 272474,
+    "canonical_groups": 13,
+    "build_seconds": {
+      "loop": 0.36679244693368673,
+      "sparse": 0.5109649058431387
+    },
+    "rows": [
+      {
+        "case": "L2_NORM_PR_UNIT",
+        "loop_ms": 0.9936147299595176,
+        "sparse_ms": 0.10390113573521376,
+        "speedup": 9.563078622082527
+      },
+      {
+        "case": "ACTIVE_UNITS",
+        "loop_ms": 1.2893464299850166,
+        "sparse_ms": 0.14633413404226303,
+        "speedup": 8.810975227506646
+      },
+      {
+        "case": "track() x4 trackers",
+        "loop_ms": 29.671844199765474,
+        "sparse_ms": 24.10698117921129,
+        "speedup": 1.2308403104969883
+      },
+      {
+        "case": "group lasso fwd+bwd",
+        "loop_ms": 7.1237628208473325,
+        "sparse_ms": 1.3509739912115037,
+        "speedup": 5.273056970148629
+      }
+    ]
+  },
+  {
+    "model": "resnet20x4",
+    "device": "cuda",
+    "device_name": "NVIDIA GeForce RTX 3060",
+    "torch": "2.12.1+cu130",
+    "params": 4327754,
+    "canonical_groups": 13,
+    "build_seconds": {
+      "loop": 0.2004936058074236,
+      "sparse": 0.9454104960896075
+    },
+    "rows": [
+      {
+        "case": "L2_NORM_PR_UNIT",
+        "loop_ms": 1.1022206395864487,
+        "sparse_ms": 0.5755044706165791,
+        "speedup": 1.9152251561235674
+      },
+      {
+        "case": "ACTIVE_UNITS",
+        "loop_ms": 1.425214905757457,
+        "sparse_ms": 0.6063826661556959,
+        "speedup": 2.35035561750625
+      },
+      {
+        "case": "track() x4 trackers",
+        "loop_ms": 29.420471370685846,
+        "sparse_ms": 26.57283870037645,
+        "speedup": 1.1071632843753743
+      },
+      {
+        "case": "group lasso fwd+bwd",
+        "loop_ms": 6.191246567759663,
+        "sparse_ms": 2.6276164734736085,
+        "speedup": 2.356221552978419
+      }
+    ]
+  },
+  {
+    "model": "resnet50",
+    "device": "cuda",
+    "device_name": "NVIDIA GeForce RTX 3060",
+    "torch": "2.12.1+cu130",
+    "params": 25557032,
+    "canonical_groups": 38,
+    "build_seconds": {
+      "loop": 0.6642660810612142,
+      "sparse": 3.8560404987074435
+    },
+    "rows": [
+      {
+        "case": "L2_NORM_PR_UNIT",
+        "loop_ms": 3.4047427750192583,
+        "sparse_ms": 2.8959557856433094,
+        "speedup": 1.1756887974251053
+      },
+      {
+        "case": "ACTIVE_UNITS",
+        "loop_ms": 3.3301644190214574,
+        "sparse_ms": 2.4519395153038204,
+        "speedup": 1.3581755986378057
+      },
+      {
+        "case": "track() x4 trackers",
+        "loop_ms": 76.7438138811849,
+        "sparse_ms": 65.63217366114259,
+        "speedup": 1.1693017250565472
+      },
+      {
+        "case": "group lasso fwd+bwd",
+        "loop_ms": 16.191992794629186,
+        "sparse_ms": 13.630341317038983,
+        "speedup": 1.1879374417710244
+      }
+    ]
+  }
+]

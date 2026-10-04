@@ -587,6 +587,37 @@ following speedups on ResNet 20 on a RTX 3060:
 | Group lasso | 15.421x | 197.0MiB | 197.0MiB |
 | Structured BOPs | 2.582x | 1.7GiB | 195.9MiB |
 
+### Sparse reduction backend
+
+Reduction plans run on a sparse backend by default. Supported ops (sum, squared
+sum, mean, count, active, L1, L2, and affine pipeline steps) are lowered into a
+few sparse matrix-vector products over one flattened source vector, instead of
+one reduction plus one scatter per module. Ops it cannot express, such as fused
+QKV reductions, and source tensors larger than 2^18 elements stay on the
+reference loop path inside the same calculation, so results are unchanged.
+
+Speedup over the loop backend on an RTX 3060 (`sanity_checks/sparse_reduction_benchmark.py`):
+
+| Model | Params | L2 norm per unit | Active units | Group lasso fwd+bwd |
+|---|---:|---:|---:|---:|
+| ResNet-20 | 0.3M | 9.6x | 8.8x | 5.3x |
+| ResNet-20 (4x width) | 4.3M | 1.9x | 2.4x | 2.4x |
+| ResNet-50 | 25.6M | 1.2x | 1.4x | 1.2x |
+
+Select the backend per tracker or for a scope:
+
+```python
+from torch_weighttracker import WeightTracker, use_reduction_backend
+
+tracker = WeightTracker(model, example_inputs=x, reduction_backend="loop")
+
+with use_reduction_backend("loop"):
+    ...  # calculations constructed here use the loop backend
+```
+
+`sanity_checks/sparse_reductions_playground.ipynb` walks through the lowering on
+hand-checkable examples.
+
 ## Status
 
 This package is pre-1.0. Public APIs may still change while the tracker,

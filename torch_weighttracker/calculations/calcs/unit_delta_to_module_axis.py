@@ -78,6 +78,9 @@ class ActiveUnitAxisDeltaReduction:
     def identity_key(self):
         return ("active_unit_axis_delta", self.multiplier)
 
+    def elementwise_affine(self) -> tuple[float, float]:
+        return self.multiplier, -self.multiplier
+
 
 def _build_unit_delta_to_module_axis_plan(
     groups: Iterable[CanonicalUnitGroup],

@@ -1,5 +1,6 @@
 import torch.nn as nn
 
+from torch_weighttracker.canonical_units import UnitAxis
 from torch_weighttracker.operations.base import WeightOperationType
 from torch_weighttracker.operations.conv import operation_for_conv2d
 from torch_weighttracker.operations.generic import create_generic_operation
@@ -35,6 +36,38 @@ def operation_for_member(member, operation_type: WeightOperationType | str):
     raise ValueError(
         f"Reducer operation is not implemented for {module.__class__.__name__}."
     )
+
+
+def operation_for_module_axis(
+    module: nn.Module,
+    unit_axis: UnitAxis,
+    operation_type: WeightOperationType | str,
+):
+    """Resolve plain Conv/Linear reductions from canonical axis semantics.
+
+    Custom pruning handlers are intentionally distinct from Torch-Pruning's
+    built-in function objects. Canonicalization has already classified those
+    handlers as input or output axes, so downstream reductions must consume
+    that classification instead of comparing handler identity again.
+    """
+    if isinstance(module, nn.Conv2d):
+        if module.groups != 1:
+            raise ValueError(
+                "Grouped and depthwise Conv2d reducer mappings are not "
+                "implemented yet."
+            )
+        if unit_axis == UnitAxis.OUT_CHANNEL:
+            return create_generic_operation(operation_type, dim=(1, 2, 3))
+        if unit_axis == UnitAxis.IN_CHANNEL:
+            return create_generic_operation(operation_type, dim=(0, 2, 3))
+
+    if isinstance(module, nn.Linear):
+        if unit_axis == UnitAxis.OUT_CHANNEL:
+            return create_generic_operation(operation_type, dim=1)
+        if unit_axis == UnitAxis.IN_CHANNEL:
+            return create_generic_operation(operation_type, dim=0)
+
+    return None
 
 
 def operation_for_module(module: nn.Module, operation_type: WeightOperationType | str):

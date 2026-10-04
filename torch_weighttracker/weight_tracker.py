@@ -35,6 +35,10 @@ from torch_weighttracker.pruning.fake import (
     fake_prune_canonical_unit,
     member_indices_for_unit,
 )
+from torch_weighttracker.reductions.backend import (
+    ReductionBackend,
+    use_reduction_backend,
+)
 from torch_weighttracker.reductions.builder import IndexSelection, SegmentSelection
 from torch_weighttracker.regularizers import (
     RegularizerType,
@@ -117,8 +121,10 @@ class WeightTracker:
         post_prune_hooks: Iterable[Callable[["WeightTracker"], None]] = (),
         attention_specs: Iterable[SeparateQKVAttentionSpec] = (),
         canonical_group_filter: Callable[[CanonicalUnitGroup], bool] | None = None,
+        reduction_backend: ReductionBackend | str = ReductionBackend.SPARSE,
     ) -> None:
         self.model = model
+        self.reduction_backend = ReductionBackend(reduction_backend)
         self.device = device
         self.dtype = dtype
         self.num_heads = {} if num_heads is None else dict(num_heads)
@@ -637,6 +643,24 @@ class WeightTracker:
             )
 
         next_stack = (*stack, calculation_type)
+        with use_reduction_backend(self.reduction_backend):
+            return self._create_calculation(
+                spec,
+                context=context,
+                context_key=context_key,
+                calculation_overrides=calculation_overrides,
+                next_stack=next_stack,
+            )
+
+    def _create_calculation(
+        self,
+        spec,
+        *,
+        context: CalculationContext,
+        context_key: tuple | None,
+        calculation_overrides: Mapping[CalcType, Calculation] | None,
+        next_stack: tuple[CalcType, ...],
+    ):
         dependencies = {
             dependency: self._get_calculation(
                 dependency,

@@ -1,8 +1,10 @@
+import pytest
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
 from torch_weighttracker import WeightTracker
+from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.canonical_units import UnitAxis
 from torch_weighttracker.torch_pruning.dependency import DependencyGraph
 from torch_weighttracker.torch_pruning.pruner.function import BasePruningFunc
@@ -47,6 +49,32 @@ class AmbiguousLinearPruner(BasePruningFunc):
 
     def get_in_channels(self, layer: nn.Linear) -> int:
         return layer.in_features
+
+
+class ConvNoopPruner(BasePruningFunc):
+    TARGET_MODULES = nn.Conv2d
+
+    def prune_out_channels(self, layer: nn.Conv2d, idxs) -> nn.Conv2d:
+        return layer
+
+    def prune_in_channels(self, layer: nn.Conv2d, idxs) -> nn.Conv2d:
+        return layer
+
+    def get_out_channels(self, layer: nn.Conv2d) -> int:
+        return layer.out_channels
+
+    def get_in_channels(self, layer: nn.Conv2d) -> int:
+        return layer.in_channels
+
+
+class TwoConv(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.conv1 = nn.Conv2d(3, 4, 3, padding=1, bias=False)
+        self.conv2 = nn.Conv2d(4, 2, 3, padding=1, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.conv2(self.conv1(x))
 
 
 def _canonical_members_for_module(tracker: WeightTracker, module: nn.Module):
@@ -115,6 +143,83 @@ def test_weight_tracker_canonicalizes_instance_custom_linear_pruner() -> None:
         and getattr(member.handler, "__self__", None) is instance_pruner
         for member in fc1_members
     )
+
+
+def test_structured_bops_supports_custom_linear_pruner_handlers() -> None:
+    model = TwoLinear()
+    pruner = LinearNoopPruner()
+    with torch.no_grad():
+        model.fc1.weight.fill_(1)
+        model.fc2.weight.fill_(1)
+        model.fc1.weight[1].zero_()
+        model.fc2.weight[:, 1].zero_()
+
+    tracker = WeightTracker(
+        model,
+        example_inputs=torch.ones(1, 2),
+        customized_pruners={
+            model.fc1: pruner,
+            model.fc2: pruner,
+        },
+    )
+    tracker.create_tracker("structured_bops", log_total_bops=True)
+
+    metrics = tracker.track()["structured_bops"]
+
+    assert metrics["compression"] == pytest.approx(1.0 / 3.0)
+    assert metrics["bops"] == pytest.approx(6.0 * 32.0 * 32.0)
+    assert metrics["baseline"] == pytest.approx(9.0 * 32.0 * 32.0)
+
+
+def test_structured_bops_supports_custom_conv_pruner_handlers() -> None:
+    model = TwoConv()
+    pruner = ConvNoopPruner()
+    with torch.no_grad():
+        model.conv1.weight.fill_(1)
+        model.conv2.weight.fill_(1)
+        model.conv1.weight[1].zero_()
+        model.conv2.weight[:, 1].zero_()
+
+    tracker = WeightTracker(
+        model,
+        example_inputs=torch.ones(1, 3, 4, 4),
+        customized_pruners={
+            model.conv1: pruner,
+            model.conv2: pruner,
+        },
+    )
+    active_macs = tracker.get_calculation(CalcType.ACTIVE_MACS_PR_MODULE)()
+
+    torch.testing.assert_close(active_macs, torch.tensor([1296.0, 864.0]))
+
+
+class ConvFlattenLinear(nn.Module):
+    def __init__(self) -> None:
+        super().__init__()
+        self.conv = nn.Conv2d(3, 4, 3, padding=1, bias=False)
+        self.pool = nn.MaxPool2d(2)
+        self.fc = nn.Linear(4 * 2 * 2, 2, bias=False)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        x = self.pool(self.conv(x))
+        return self.fc(x.reshape(x.shape[0], -1))
+
+
+def test_structured_bops_preserves_flatten_axis_multiplicity() -> None:
+    model = ConvFlattenLinear()
+    with torch.no_grad():
+        model.conv.weight.fill_(1)
+        model.fc.weight.fill_(1)
+        model.conv.weight[1].zero_()
+        model.fc.weight[:, 4:8].zero_()
+
+    tracker = WeightTracker(
+        model,
+        example_inputs=torch.ones(1, 3, 4, 4),
+    )
+    active_macs = tracker.get_calculation(CalcType.ACTIVE_MACS_PR_MODULE)()
+
+    torch.testing.assert_close(active_macs, torch.tensor([1296.0, 24.0]))
 
 
 def test_weight_tracker_does_not_infer_feature_for_ambiguous_custom_pruner() -> None:

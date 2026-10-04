@@ -141,6 +141,9 @@ class ScaleTensorReduction:
     def identity_key(self) -> Hashable:
         return ("scale", self.scale)
 
+    def elementwise_affine(self) -> tuple[float, float]:
+        return self.scale, 0.0
+
 
 def _module_axis_group_ids(
     groups: Iterable[CanonicalUnitGroup],

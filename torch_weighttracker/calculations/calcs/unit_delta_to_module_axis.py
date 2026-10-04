@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter, defaultdict
 from collections.abc import Iterable, Mapping
 from typing import cast
 
@@ -88,8 +89,7 @@ def _build_unit_delta_to_module_axis_plan(
     canonical_groups = tuple(groups)
     input_ref = create_unit_input_ref(canonical_groups, device=device, dtype=dtype)
     builder = ReductionPlanBuilder(output_length=len(weighted_module_index) * 2)
-    seen: set[tuple[int, int, int]] = set()
-    record_count = 0
+    multipliers_by_axis_unit: dict[tuple[int, int, int], float] = {}
 
     for member in canonical_members(canonical_groups):
         module_index = weighted_module_index.get(member.module)
@@ -97,29 +97,55 @@ def _build_unit_delta_to_module_axis_plan(
             continue
 
         axis = module_axis_for_member(member)
-        source_indices: list[int] = []
-        for unit_index in member.unit_indices:
+        semantic_unit_multiplicities = Counter(
+            int(unit_index) for unit_index in member.unit_indices
+        )
+        if (member.num_heads is not None and member.head_dim is not None) or (
+            member.unit_axis
+            in {
+                UnitAxis.QKV_CHANNEL,
+                UnitAxis.QKV_HEAD,
+                UnitAxis.QKV_HEAD_DIM,
+            }
+        ):
+            semantic_unit_multiplicities = Counter(
+                {unit_index: 1 for unit_index in semantic_unit_multiplicities}
+            )
+        base_multiplier = axis_multiplier_for_member(member, axis=axis)
+        for unit_index, multiplicity in semantic_unit_multiplicities.items():
             key = (module_index, axis, int(unit_index))
-            if key in seen:
-                continue
-            seen.add(key)
-            source_indices.append(int(unit_index))
+            multiplier = base_multiplier * float(multiplicity)
+            existing = multipliers_by_axis_unit.get(key)
+            if existing is not None and existing != multiplier:
+                raise ValueError(
+                    "Canonical members disagree on the physical-axis "
+                    f"multiplicity for module {module_index}, axis {axis}, "
+                    f"unit {unit_index}: {existing} versus {multiplier}."
+                )
+            multipliers_by_axis_unit[key] = multiplier
 
-        if not source_indices:
-            continue
+    source_indices_by_target_multiplier: dict[
+        tuple[int, float], list[int]
+    ] = defaultdict(list)
+    for (module_index, axis, unit_index), multiplier in (
+        multipliers_by_axis_unit.items()
+    ):
+        target = module_index * 2 + axis
+        source_indices_by_target_multiplier[(target, multiplier)].append(unit_index)
 
+    record_count = 0
+    for (target, multiplier), source_indices in (
+        source_indices_by_target_multiplier.items()
+    ):
         op = ReductionOp(
             input_ref,
-            ActiveUnitAxisDeltaReduction(
-                axis_multiplier_for_member(member, axis=axis),
-            ),
+            ActiveUnitAxisDeltaReduction(multiplier),
         )
-        target = module_index * 2 + axis
         builder.add(
             ReductionRecord(
                 op=op,
                 mapping=ReductionMapping(
-                    source=IndexSelection(tuple(source_indices)),
+                    source=IndexSelection(tuple(sorted(source_indices))),
                     target=IndexSelection((target,) * len(source_indices)),
                 ),
             )

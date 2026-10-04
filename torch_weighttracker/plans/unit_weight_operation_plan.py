@@ -22,7 +22,10 @@ from torch_weighttracker.extractors.extractor import (
     TensorSourceRef,
 )
 from torch_weighttracker.operations import QKVSemanticOperation, WeightOperationType
-from torch_weighttracker.operations.resolver import operation_for_member
+from torch_weighttracker.operations.resolver import (
+    operation_for_member,
+    operation_for_module_axis,
+)
 from torch_weighttracker.reductions.builder import (
     FullSelection,
     IndexSelection,
@@ -77,6 +80,14 @@ class UnitWeightReductionMapper:
             SourceLayout.SEPARATE_QKV,
         }:
             return self._qkv_reduction(element)
+
+        axis_operation = operation_for_module_axis(
+            element.module,
+            element.unit_axis,
+            self.operation_type,
+        )
+        if axis_operation is not None:
+            return axis_operation
 
         return operation_for_member(element.member, self.operation_type)
 

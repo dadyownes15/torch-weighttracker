@@ -610,8 +610,9 @@ for layer in tracker.view_bitwidths().layers:
 Each function runs once per layer on every `track()`. If a function reads
 bit-widths from GPU tensors, each read is a GPU-to-CPU sync, so call `track()`
 at logging frequency rather than on every optimizer step.
-`sanity_checks/bitwidth_recheck.py` changes bit-widths during a short training
-run, checks that BOPs follow, and reports the `track()` overhead.
+
+`python -m sanity_checks.bitwidth_recheck` shows BOPs following a weight and an
+input-activation bit-width change between two `track()` calls.
 
 ### Migrating from 0.3
 

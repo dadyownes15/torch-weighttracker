@@ -65,7 +65,7 @@ compression often needs a different view:
 - A transformer unit can mean an attention head, a head dimension, or a fused
   QKV slice rather than a simple row or column.
 - A metric such as "active BOPs" depends on sparsity, module shape, MAC counts,
-  and bitrates at the same time.
+  and bit-widths at the same time.
 - A regularizer such as group lasso should penalize the coupled structural unit,
   not each weight tensor independently.
 
@@ -332,7 +332,7 @@ metrics = tracker.track()
 #### Formulation of the Structured BOPs Metric
 
 For each weighted module $m$, WeightTracker multiplies the active structured MAC
-count by that module's activation and weight bit widths [1]:
+count by the bit widths of that module's input activations and weights [1]:
 
 $$
 \mathit{StructuredBOPs}_m =
@@ -386,8 +386,11 @@ Where:
 - $n^{\mathrm{active}}_{m,a}$: active size of cost axis $a$ for module $m$.
 - $n^{\mathrm{baseline}}_{m,a}$: dense baseline size of cost axis $a$ for
   module $m$.
-- $b^{\mathrm{act}}_m$: activation bit width for module $m$.
+- $b^{\mathrm{act}}_m$: bit width of the input activations of module $m$.
 - $b^{\mathrm{weight}}_m$: weight bit width for module $m$.
+
+Bit widths come from `weight_bitwidth_fn` and `activation_bitwidth_fn`; see
+[Exposing Bit-Widths](#exposing-bit-widths).
 
 ### Comparison with Direct Removal and FLOP Count
 
@@ -439,7 +442,7 @@ weights.
 ## Unstructured BOPs
 
 Unstructured BOPs combines each layer's dense runtime MAC count with its
-active weight fraction and activation/weight bit widths:
+active weight fraction and input-activation/weight bit widths:
 
 ```python
 import torch
@@ -481,7 +484,9 @@ b^{\mathrm{act}}_m
 b^{\mathrm{weight}}_m
 $$
 
-Compression uses the same dense 32-bit baseline as structured BOPs:
+Bit widths are set as for structured BOPs; see
+[Exposing Bit-Widths](#exposing-bit-widths). Compression uses the same dense
+32-bit baseline as structured BOPs:
 
 $$
 \mathit{CompressionRate} =
@@ -489,6 +494,141 @@ $$
 \frac{\sum_m \mathit{UnstructuredBOPs}_m}
 {\sum_m \mathit{BaselineMACs}_m \cdot 32 \cdot 32}
 $$
+
+## Exposing Bit-Widths
+
+Both BOPs trackers multiply each layer's MACs by the bit-widths of the two
+operands in each multiplication: the layer's **weights** $b^{\mathrm{weight}}_m$
+and the layer's **input activations** $b^{\mathrm{act}}_m$. This is the usual
+BOPs definition in the literature:
+
+- Baskin et al. [3] count one $b_a$-bit by $b_w$-bit multiplication per MAC,
+  plus accumulator additions.
+- van Baalen et al. [4] use the same count without the accumulator terms, since
+  the accumulator width is usually fixed.
+- Wang et al. [1] write
+  $\mathit{BOPs}_l = \mathit{MACs}_l \cdot b_{w,l} \cdot b_{a,l-1}$. The
+  activation bit-width there is that of the previous layer's output, which is
+  layer $l$'s input.
+
+Each bit-width comes from its own function, passed when constructing
+`WeightTracker`:
+
+```python
+def weight_bitwidth_fn(name: str, module: nn.Module) -> int:
+    ...  # bit-width of this layer's weights
+
+
+def activation_bitwidth_fn(name: str, module: nn.Module) -> int:
+    ...  # bit-width of this layer's input activations
+
+
+tracker = WeightTracker(
+    model,
+    example_inputs,
+    weight_bitwidth_fn=weight_bitwidth_fn,
+    activation_bitwidth_fn=activation_bitwidth_fn,
+)
+```
+
+- `name` is the layer's qualified name from `model.named_modules()`, the same
+  key used under `modules` in layerwise BOPs metrics. `module` is the layer.
+- Both functions are called for every layer the BOPs trackers count, on every
+  `track()`. Bit-width changes made by a quantizer during training show up in
+  the next `track()`; trackers do not need to be recreated.
+- Either function can be left out, and that side is then 32 bits. For
+  weight-only quantization, pass only `weight_bitwidth_fn`. Without either
+  function, BOPs only reflect sparsity.
+- Values must be whole numbers >= 1: an `int`, a whole-number float, or a scalar
+  tensor such as `torch.tensor(4.)`. Anything else, such as `5.3`, `0`, or a
+  boolean, raises a `ValueError` naming the layer. Round learned bit-widths in
+  the quantizer or in the function.
+- Bit-widths come only from these functions. The tracker does not read module
+  attributes or quantizer parametrizations on its own.
+
+### Input Activations
+
+`activation_bitwidth_fn` is called with the layer that *consumes* the
+activations, so an activation quantizer counts for the layer it feeds. In
+`conv1 -> ReLU -> act_quant -> conv2`, the bit-width of `act_quant` is the
+activation bit-width of `conv2`, not `conv1`.
+
+The tracker cannot make this link itself, because quantizer modules are not
+visible in its dependency graph. Map it in the function instead, for example
+with a dict from layer name to the quantizer in front of that layer. For the
+first layer, return the bit-width of the network input, for example 8 for 8-bit
+images.
+
+`nn.MultiheadAttention` counts as one layer with one activation and one weight
+bit-width. Its MACs cover only the input and output projections. The
+matrix products between activations ($QK^\top$ and attention times $V$) are not
+counted.
+
+### Example
+
+```python
+weight_bits = {"conv1": 4, "conv2": 8}
+input_bits = {"conv2": 8}
+
+tracker = WeightTracker(
+    model,
+    example_inputs,
+    weight_bitwidth_fn=lambda name, module: weight_bits.get(name, 32),
+    activation_bitwidth_fn=lambda name, module: input_bits.get(name, 32),
+)
+bops = tracker.create_tracker("structured_bops")
+bops.track()
+
+weight_bits["conv1"] = 2  # e.g. a quantizer lowered conv1 during training
+bops.track()  # uses the new bit-widths
+```
+
+In practice the functions read the current values from your quantizers instead
+of from dicts.
+
+### Inspecting Bit-Widths
+
+`view_bitwidths()` shows what the trackers see. It accepts the same
+`include`/`ignore` filters as the BOPs trackers. Each source is the function
+name, or `"default"` when that function was not passed. For the example above:
+
+```python
+for layer in tracker.view_bitwidths().layers:
+    print(
+        layer.name,
+        layer.activation_bits,
+        layer.weight_bits,
+        layer.activation_source,
+        layer.weight_source,
+    )
+# conv1 32 2 activation_bitwidth_fn weight_bitwidth_fn
+# conv2 8 8 activation_bitwidth_fn weight_bitwidth_fn
+```
+
+### Cost
+
+Each function runs once per layer on every `track()`. If a function reads
+bit-widths from GPU tensors, each read is a GPU-to-CPU sync, so call `track()`
+at logging frequency rather than on every optimizer step.
+
+`python -m sanity_checks.bitwidth_recheck` shows BOPs following a weight and an
+input-activation bit-width change between two `track()` calls.
+
+### Migrating from 0.3
+
+Earlier versions read bit-widths once, when the tracker was created, from
+quantizer parametrizations on `weight` exposing `get_bitwidth()` and from the
+`activation_bitrate`, `act_bitrate`, `weight_bitrate`, and `bitrate` module
+attributes. These are no longer read. Pass the functions instead, for example:
+
+```python
+tracker = WeightTracker(
+    model,
+    example_inputs,
+    activation_bitwidth_fn=lambda name, m: getattr(m, "activation_bitrate", 32),
+    weight_bitwidth_fn=lambda name, m: getattr(m, "weight_bitrate", 32),
+)
+```
 
 ## NVIDIA 2:4 Sparsity
 
@@ -559,7 +699,7 @@ The main API is `WeightTracker`. Internally it is split into a few layers:
    into segment and index operations that use PyTorch's efficient tensor
    computations.
 4. Calculations: `calculations/` defines named calculation specs such as
-   per-unit L2 norm, active units, parameters per unit, active MACs, and bitrates.
+   per-unit L2 norm, active units, parameters per unit, active MACs, and bit-widths.
    Calculations can depend on each other and cache constant results.
 5. Consumers: `regularizers/` and `trackers/` request the calculations they need,
    optionally with `include` and `ignore` contexts for selecting modules in a
@@ -640,6 +780,10 @@ MIT
 
 ## References
 
-[1] Wang et al., *Differentiable Joint Pruning and Quantization for Hardware Efficiency*, 2020.
+[1] Wang et al., [*Differentiable Joint Pruning and Quantization for Hardware Efficiency*](https://arxiv.org/abs/2007.10463), ECCV 2020.
 
 [2] Fang et al., [Torch-Pruning](https://github.com/VainF/Torch-Pruning).
+
+[3] Baskin et al., [*UNIQ: Uniform Noise Injection for Non-Uniform Quantization of Neural Networks*](https://arxiv.org/abs/1804.10969), 2018.
+
+[4] van Baalen et al., [*Bayesian Bits: Unifying Quantization and Pruning*](https://arxiv.org/abs/2005.07093), NeurIPS 2020.

@@ -20,3 +20,6 @@ DEPLOYMENT.dev.md
 scripts/
 AGENTS.md
 tests/dev_local
+.scratch/
+CLAUDE.md
+GLOSSARY.md

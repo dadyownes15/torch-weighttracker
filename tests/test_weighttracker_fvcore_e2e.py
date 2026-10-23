@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 from torch import Tensor
 
+from tests.bitwidths import bitwidths_by_name
 from tests.fixtures_models import TinyTransformerClassifier
 from torch_weighttracker import WeightTracker
 from torch_weighttracker.calculations import CalcType
@@ -469,11 +470,12 @@ def _module_metric(metrics: dict, key: str) -> dict[str, torch.Tensor]:
 
 def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None:
     model = TinyResNetClassifier().eval()
-    model.stem_conv.activation_bitrate = 8
-    model.stem_conv.weight_bitrate = 4
-    model.block1.conv1.bitrate = 6
     example_inputs = torch.randn(1, 3, 32, 32)
-    tracker = WeightTracker(model, example_inputs)
+    tracker = WeightTracker(
+        model,
+        example_inputs,
+        **bitwidths_by_name({"stem_conv": (8, 4), "block1.conv1": (6, 6)}),
+    )
 
     structured_bops = tracker.create_tracker(
         TrackerType.STRUCTURED_BOPS,
@@ -505,12 +507,6 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
 
 def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
     model = CifarResNet20().eval()
-    model.stem.activation_bitrate = 8
-    model.stem.weight_bitrate = 4
-    model.layer2[0].conv1.bitrate = 6
-    model.layer3[2].conv2.activation_bitrate = 4
-    model.layer3[2].conv2.weight_bitrate = 2
-    model.fc.bitrate = 8
     example_inputs = torch.randn(1, 3, 32, 32)
 
     with torch.no_grad():
@@ -524,6 +520,14 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
         model,
         example_inputs=example_inputs,
         root_module_types=[nn.Conv2d, nn.Linear],
+        **bitwidths_by_name(
+            {
+                "stem": (8, 4),
+                "layer2.0.conv1": (6, 6),
+                "layer3.2.conv2": (4, 2),
+                "fc": (8, 8),
+            }
+        ),
     )
     unstructured_bops = tracker.create_tracker(
         TrackerType.UNSTRUCTURED_BOPS,
@@ -580,14 +584,6 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
 
 def test_unstructured_bops_matches_fvcore_weighted_macs_for_transformer() -> None:
     model = LargerTransformerClassifier().eval()
-    model.blocks[0].attn.activation_bitrate = 8
-    model.blocks[0].attn.weight_bitrate = 4
-    model.blocks[0].mlp_in.bitrate = 6
-    model.blocks[1].attn.bitrate = 5
-    model.blocks[1].mlp_out.activation_bitrate = 4
-    model.blocks[1].mlp_out.weight_bitrate = 2
-    model.head.activation_bitrate = 8
-    model.head.weight_bitrate = 3
     token_ids = torch.randint(0, 48, (1, 12))
 
     with torch.no_grad():
@@ -605,6 +601,15 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_transformer() -> Non
             block.attn: block.attn.num_heads
             for block in model.blocks
         },
+        **bitwidths_by_name(
+            {
+                "blocks.0.attn": (8, 4),
+                "blocks.0.mlp_in": (6, 6),
+                "blocks.1.attn": (5, 5),
+                "blocks.1.mlp_out": (4, 2),
+                "head": (8, 3),
+            }
+        ),
     )
     unstructured_bops = tracker.create_tracker(
         TrackerType.UNSTRUCTURED_BOPS,

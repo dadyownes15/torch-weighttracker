@@ -65,7 +65,7 @@ compression often needs a different view:
 - A transformer unit can mean an attention head, a head dimension, or a fused
   QKV slice rather than a simple row or column.
 - A metric such as "active BOPs" depends on sparsity, module shape, MAC counts,
-  and bitrates at the same time.
+  and bit-widths at the same time.
 - A regularizer such as group lasso should penalize the coupled structural unit,
   not each weight tensor independently.
 
@@ -389,6 +389,8 @@ Where:
 - $b^{\mathrm{act}}_m$: activation bit width for module $m$.
 - $b^{\mathrm{weight}}_m$: weight bit width for module $m$.
 
+Bit widths come from `bitwidth_fn`; see [Exposing Bit-Widths](#exposing-bit-widths).
+
 ### Comparison with Direct Removal and FLOP Count
 
 For some model architectures, the BOPs calculation may differ from values
@@ -481,7 +483,9 @@ b^{\mathrm{act}}_m
 b^{\mathrm{weight}}_m
 $$
 
-Compression uses the same dense 32-bit baseline as structured BOPs:
+Bit widths come from `bitwidth_fn`, as for structured BOPs; see
+[Exposing Bit-Widths](#exposing-bit-widths). Compression uses the same dense
+32-bit baseline as structured BOPs:
 
 $$
 \mathit{CompressionRate} =
@@ -489,6 +493,118 @@ $$
 \frac{\sum_m \mathit{UnstructuredBOPs}_m}
 {\sum_m \mathit{BaselineMACs}_m \cdot 32 \cdot 32}
 $$
+
+## Exposing Bit-Widths
+
+Both BOPs trackers multiply each layer's MACs by its activation bit-width
+$b^{\mathrm{act}}_m$ and weight bit-width $b^{\mathrm{weight}}_m$. You state
+them explicitly with `bitwidth_fn` when constructing `WeightTracker`:
+
+```python
+def bitwidth_fn(name: str, module: nn.Module) -> tuple[int, int]:
+    ...
+    return activation_bits, weight_bits
+
+
+tracker = WeightTracker(model, example_inputs, bitwidth_fn=bitwidth_fn)
+```
+
+- `name` is the layer's qualified name from `model.named_modules()`, the same
+  key used under `modules` in layerwise BOPs metrics. `module` is the layer.
+- It is called for every layer the BOPs trackers count, on every `track()`.
+  Bit-width changes made by a quantizer during training show up in the next
+  `track()`; trackers do not need to be recreated.
+- Both values are required. Return `(32, 32)` for layers that are not
+  quantized.
+- Values must be whole numbers >= 1: an `int`, a whole-number float, or a scalar
+  tensor such as `torch.tensor(4.)`. Anything else, such as `5.3`, `0`, or a
+  boolean, raises a `ValueError` naming the layer. Round learned bit-widths in
+  the quantizer or in `bitwidth_fn`.
+- Without `bitwidth_fn`, every layer has 32-bit activations and weights, so BOPs
+  only reflect sparsity.
+- Bit-widths come only from `bitwidth_fn`. The tracker does not read module
+  attributes or quantizer parametrizations on its own.
+
+Check what the trackers see with `view_bitwidths()`. It accepts the same
+`include`/`ignore` filters as the BOPs trackers, and `source` is `"bitwidth_fn"`
+or `"default"`:
+
+```python
+for layer in tracker.view_bitwidths().layers:
+    print(layer.name, layer.activation_bits, layer.weight_bits, layer.source)
+# conv1 32 4 bitwidth_fn
+# conv2 6 32 bitwidth_fn
+# fc 32 32 bitwidth_fn
+```
+
+### Recipes
+
+CoDeQ weight quantizers are registered as parametrizations on `weight`:
+
+```python
+import torch.nn.utils.parametrize as parametrize
+
+
+def codeq_bitwidth_fn(name, module):
+    weight_bits = 32
+    if parametrize.is_parametrized(module, "weight"):
+        for parametrization in module.parametrizations.weight:
+            quantizer = getattr(parametrization, "quantizer", None)
+            if quantizer is not None:
+                weight_bits = quantizer.get_bitwidth()
+    return 32, weight_bits
+```
+
+Fixed per-layer values:
+
+```python
+bits = {"stem": (8, 8), "layer1.0.conv1": (8, 4)}
+
+tracker = WeightTracker(
+    model,
+    example_inputs,
+    bitwidth_fn=lambda name, module: bits.get(name, (32, 32)),
+)
+```
+
+Activation quantizers that live in separate modules, for example a quantizer
+applied in front of a convolution, are mapped to the layer whose input they
+quantize:
+
+```python
+activation_quantizers = {"conv2": model.act_quant}
+
+
+def bitwidth_fn(name, module):
+    quantizer = activation_quantizers.get(name)
+    activation_bits = 32 if quantizer is None else quantizer.bits
+    _, weight_bits = codeq_bitwidth_fn(name, module)
+    return activation_bits, weight_bits
+```
+
+### Cost
+
+`bitwidth_fn` runs once per layer on every `track()`. Quantizers that return
+CPU tensors, such as CoDeQ's `get_bitwidth()`, cause one GPU-to-CPU sync per
+quantized layer per call, so call `track()` at logging frequency rather than on
+every optimizer step. `sanity_checks/bitwidth_recheck.py` changes bit-widths
+during a short training run, checks that BOPs follow, and reports the `track()`
+overhead.
+
+### Migrating from 0.3
+
+Earlier versions read bit-widths once, when the tracker was created, from CoDeQ
+quantizers on `parametrizations.weight` and from the `activation_bitrate`,
+`act_bitrate`, `weight_bitrate`, and `bitrate` module attributes. These are no
+longer read. Pass a `bitwidth_fn` instead, for example:
+
+```python
+def bitwidth_fn(name, module):
+    return (
+        getattr(module, "activation_bitrate", 32),
+        getattr(module, "weight_bitrate", 32),
+    )
+```
 
 ## NVIDIA 2:4 Sparsity
 
@@ -559,7 +675,7 @@ The main API is `WeightTracker`. Internally it is split into a few layers:
    into segment and index operations that use PyTorch's efficient tensor
    computations.
 4. Calculations: `calculations/` defines named calculation specs such as
-   per-unit L2 norm, active units, parameters per unit, active MACs, and bitrates.
+   per-unit L2 norm, active units, parameters per unit, active MACs, and bit-widths.
    Calculations can depend on each other and cache constant results.
 5. Consumers: `regularizers/` and `trackers/` request the calculations they need,
    optionally with `include` and `ignore` contexts for selecting modules in a

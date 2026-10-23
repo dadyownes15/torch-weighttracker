@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
@@ -23,6 +23,7 @@ class CalculationContext:
     weighted_module_index: Mapping[nn.Module, int]
     example_inputs: object | None = None
     weighted_module_names: tuple[str, ...] = ()
+    bitwidth_fn: Callable[[str, nn.Module], tuple] | None = None
 
 
 def calculation_dtype(ctx: CalculationContext) -> torch.dtype:

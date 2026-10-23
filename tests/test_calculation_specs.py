@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 
 import torch_weighttracker.calculations.calculations as calc_impl
+from tests.bitwidths import bitwidths_by_name
 from torch_weighttracker.calculations import CalcType
 from torch_weighttracker.calculations.cached_calc import CachedCalculation
 from torch_weighttracker.canonical_units import canonicalize_groups
@@ -155,10 +156,12 @@ def test_weight_tracker_builds_public_calculations_from_specs() -> None:
 
 def test_module_axis_and_bitrates_share_weighted_module_order() -> None:
     model, groups = _model_and_groups()
-    model.fc1.activation_bitrate = 8
-    model.fc1.weight_bitrate = 2
-    model.fc2.bitrate = 4
-    tracker = _tracker_from_groups(model, groups, example_inputs=torch.randn(1, 2))
+    tracker = _tracker_from_groups(
+        model,
+        groups,
+        example_inputs=torch.randn(1, 2),
+        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+    )
 
     calculations = tracker.ensure_calculations(
         (
@@ -183,8 +186,6 @@ def test_module_axis_and_bitrates_share_weighted_module_order() -> None:
 
 def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
     model = TinyQKVProjectionBlock()
-    model.qkv.bitrate = 1
-    model.proj.bitrate = 1
     with torch.no_grad():
         model.qkv.weight.fill_(1)
         model.proj.weight.fill_(1)
@@ -206,6 +207,7 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
         example_inputs=torch.randn(1, 4),
         num_heads={model.qkv: 2},
         prune_dim=True,
+        bitwidth_fn=bitwidths_by_name({"qkv": (1, 1), "proj": (1, 1)}),
     )
 
     calculations = tracker.ensure_calculations(

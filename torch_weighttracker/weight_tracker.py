@@ -27,8 +27,11 @@ from torch_weighttracker.consumer_ignore import (
     FilterItem,
     filter_canonical_members,
 )
-from torch_weighttracker.extractors.codeq_bitrate_extractor import (
-    ModuleBitrateExtractor,
+from torch_weighttracker.extractors.bitwidth_extractor import (
+    BitwidthFn,
+    BitwidthView,
+    LayerBitwidth,
+    ModuleBitwidthExtractor,
 )
 from torch_weighttracker.pruning.fake import (
     FakePruneUnitResult,
@@ -53,6 +56,10 @@ from torch_weighttracker.trackers import (
 from torch_weighttracker.trackers.base import (
     is_tracker_type_collection,
     normalize_tracker_types,
+)
+from torch_weighttracker.trackers.bops_filter import (
+    bops_consumer_filter,
+    filter_bops_weighted_modules,
 )
 
 _BOP_TRACKER_TYPES = frozenset(
@@ -122,7 +129,15 @@ class WeightTracker:
         attention_specs: Iterable[SeparateQKVAttentionSpec] = (),
         canonical_group_filter: Callable[[CanonicalUnitGroup], bool] | None = None,
         reduction_backend: ReductionBackend | str = ReductionBackend.SPARSE,
+        bitwidth_fn: BitwidthFn | None = None,
     ) -> None:
+        """
+        `bitwidth_fn(name, module) -> (activation_bits, weight_bits)` gives the
+        bitwidths the BOPs trackers use. It is called for every tracked layer
+        on every `track()` and `view_bitwidths()`, so bitwidth changes during
+        training are picked up. Values must be whole numbers >= 1. Without it
+        every layer is `(32, 32)`. See the README section "Exposing bit-widths".
+        """
         self.model = model
         self.reduction_backend = ReductionBackend(reduction_backend)
         self.device = device
@@ -142,6 +157,9 @@ class WeightTracker:
         if canonical_group_filter is not None and not callable(canonical_group_filter):
             raise TypeError("canonical_group_filter must be callable or None.")
         self.canonical_group_filter = canonical_group_filter
+        if bitwidth_fn is not None and not callable(bitwidth_fn):
+            raise TypeError("bitwidth_fn must be callable or None.")
+        self.bitwidth_fn = bitwidth_fn
         self.dependency_graph = None
 
         self.ignored_params = [] if ignored_params is None else list(ignored_params)
@@ -741,6 +759,36 @@ class WeightTracker:
 
         return "\n".join(lines)
 
+    def view_bitwidths(
+        self,
+        *,
+        include: Iterable[FilterItem] = (),
+        ignore: Iterable[FilterItem] = (),
+    ) -> BitwidthView:
+        """
+        Current activation and weight bitwidth of every layer the BOPs trackers
+        count, with their source (`"bitwidth_fn"` or `"default"`).
+        """
+        modules = filter_bops_weighted_modules(
+            self._get_weighted_modules(),
+            bops_consumer_filter(include=include, ignore=ignore),
+        )
+        extractor = ModuleBitwidthExtractor(bitwidth_fn=self.bitwidth_fn)
+        layers = []
+        for name, module in zip(
+            self._module_names_for_modules(modules), modules, strict=True
+        ):
+            activation_bits, weight_bits = extractor.resolve(name, module)
+            layers.append(
+                LayerBitwidth(
+                    name=name,
+                    activation_bits=activation_bits,
+                    weight_bits=weight_bits,
+                    source=extractor.source,
+                )
+            )
+        return BitwidthView(layers=tuple(layers))
+
     def ensure_calculations(
         self,
         calculation_types: tuple[CalcType, ...],
@@ -1050,6 +1098,7 @@ class WeightTracker:
             },
             example_inputs=self.example_inputs,
             weighted_module_names=self._module_names_for_modules(weighted_modules),
+            bitwidth_fn=self.bitwidth_fn,
         )
 
     def _validate_consumer_context(self, context: CalculationContext) -> None:
@@ -1091,7 +1140,7 @@ class WeightTracker:
     def _get_weighted_module_entries(self):
         if self._weighted_module_entries is None:
             self._weighted_module_entries = tuple(
-                ModuleBitrateExtractor.weighted_modules(self.model)
+                ModuleBitwidthExtractor.weighted_modules(self.model)
             )
         return self._weighted_module_entries
 

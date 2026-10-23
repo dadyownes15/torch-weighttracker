@@ -203,7 +203,7 @@ def test_create_tracker_wires_structured_bops_from_required_calculations() -> No
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     structured_bops = tracker.create_tracker(TrackerType.STRUCTURED_BOPS)
@@ -254,7 +254,7 @@ def test_structured_bops_normalization_affects_reporting_not_bops() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     metrics = tracker.create_tracker(
@@ -292,7 +292,7 @@ def test_create_tracker_wires_unstructured_bops_from_required_calculations() -> 
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     unstructured_bops = tracker.create_tracker(TrackerType.UNSTRUCTURED_BOPS)
@@ -317,7 +317,7 @@ def test_unstructured_bops_normalization_affects_reporting_not_bops() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     metrics = tracker.create_tracker(
@@ -421,7 +421,7 @@ def test_wandb_format_flattens_structured_bops_metrics() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     metrics = tracker.create_tracker(
@@ -681,7 +681,7 @@ def test_structured_bops_ignore_filters_weighted_modules() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     full = tracker.create_tracker(TrackerType.STRUCTURED_BOPS)
@@ -700,7 +700,7 @@ def test_structured_bops_include_filters_weighted_modules_and_names() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     metrics = tracker.create_tracker(
@@ -729,7 +729,7 @@ def test_structured_bops_include_parent_matches_default_values() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     full_metrics = tracker.create_tracker(
@@ -800,7 +800,7 @@ def test_structured_bops_include_parent_ignore_child_keeps_fc1() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     metrics = tracker.create_tracker(
@@ -973,7 +973,7 @@ def test_structured_bops_metric_module_names_follow_context() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     full_metrics = tracker.create_tracker(
@@ -1020,7 +1020,7 @@ def test_structured_bops_default_compression_follows_context() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     full_metrics = tracker.create_tracker(TrackerType.STRUCTURED_BOPS).track()[
@@ -1053,7 +1053,7 @@ def test_unstructured_bops_default_compression_follows_context() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     full_metrics = tracker.create_tracker(TrackerType.UNSTRUCTURED_BOPS).track()[
@@ -1086,7 +1086,7 @@ def test_structured_bops_layerwise_stats_are_opt_in() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     total_only = tracker.create_tracker(
@@ -1122,7 +1122,7 @@ def test_unstructured_bops_layerwise_stats_are_opt_in() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     total_only = tracker.create_tracker(
@@ -1158,7 +1158,7 @@ def test_structured_bops_total_bops_logging_is_opt_in() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     metrics = tracker.create_tracker(
@@ -1193,7 +1193,7 @@ def test_unstructured_bops_total_bops_logging_is_opt_in() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     metrics = tracker.create_tracker(
@@ -1228,7 +1228,7 @@ def test_unstructured_bops_reflects_weight_changes_after_creation() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
     unstructured_bops = tracker.create_tracker(
         TrackerType.UNSTRUCTURED_BOPS,

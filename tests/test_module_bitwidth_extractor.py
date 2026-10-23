@@ -47,7 +47,8 @@ def test_extractor_lists_multihead_attention_parent_and_children():
 def test_extractor_binds_multihead_attention_projection_bitwidths():
     model = TinyAttentionModel()
     extractor = ModuleBitwidthExtractor(
-        bitwidth_fn=lambda name, module: (8, 4),
+        activation_bitwidth_fn=lambda name, module: 8,
+        weight_bitwidth_fn=lambda name, module: 4,
         module_names={model.attn: "attn"},
     )
 
@@ -74,7 +75,8 @@ def test_extractor_ref_rereads_bitwidths_on_every_get():
     model = TinyWeightedModel()
     bits = {"fc1": (8, 8)}
     extractor = ModuleBitwidthExtractor(
-        bitwidth_fn=lambda name, module: bits[name],
+        activation_bitwidth_fn=lambda name, module: bits[name][0],
+        weight_bitwidth_fn=lambda name, module: bits[name][1],
         module_names={model.fc1: "fc1"},
     )
     ref = extractor.bind(model.fc1)

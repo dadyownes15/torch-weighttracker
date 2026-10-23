@@ -13,10 +13,12 @@ from torch_weighttracker.extractors.extractor import (
     TensorSpec,
 )
 
-BitwidthFn = Callable[[str, nn.Module], tuple[Any, Any]]
-"""`bitwidth_fn(name, module) -> (activation_bits, weight_bits)`.
+BitwidthFn = Callable[[str, nn.Module], Any]
+"""`fn(name, module) -> bits` for one side of a layer's multiplications.
 
-See the README section "Exposing bit-widths".
+`weight_bitwidth_fn` returns the bitwidth of the layer's weights,
+`activation_bitwidth_fn` the bitwidth of the layer's input activations. See the
+README section "Exposing bit-widths".
 """
 
 DEFAULT_BITWIDTH = 32
@@ -27,7 +29,8 @@ class LayerBitwidth:
     name: str
     activation_bits: int
     weight_bits: int
-    source: str
+    activation_source: str
+    weight_source: str
 
 
 @dataclass(frozen=True)
@@ -63,7 +66,8 @@ class ModuleBitwidthRef:
         return (
             "module_bitwidth",
             id(self.module),
-            id(self.extractor.bitwidth_fn),
+            id(self.extractor.activation_bitwidth_fn),
+            id(self.extractor.weight_bitwidth_fn),
             self.device,
             self.extractor.dtype,
         )
@@ -72,28 +76,36 @@ class ModuleBitwidthRef:
 class ModuleBitwidthExtractor(ElementTensorExtractor[nn.Module]):
     """Bind weighted modules to live `(activation_bits, weight_bits)` source refs.
 
-    Bitwidths come only from `bitwidth_fn`; without it every module is
-    `(32, 32)`.
+    Each side comes only from its function; a missing function means 32 bits.
+    Activation bits are the bitwidth of the module's input activations.
     """
 
     def __init__(
         self,
         *,
-        bitwidth_fn: BitwidthFn | None = None,
+        activation_bitwidth_fn: BitwidthFn | None = None,
+        weight_bitwidth_fn: BitwidthFn | None = None,
         module_names: Mapping[nn.Module, str] | None = None,
         device: torch.device | str | None = None,
         dtype: torch.dtype | None = None,
     ) -> None:
-        if bitwidth_fn is not None and not callable(bitwidth_fn):
-            raise TypeError("bitwidth_fn must be callable or None.")
-        self.bitwidth_fn = bitwidth_fn
+        _check_callable(activation_bitwidth_fn, "activation_bitwidth_fn")
+        _check_callable(weight_bitwidth_fn, "weight_bitwidth_fn")
+        self.activation_bitwidth_fn = activation_bitwidth_fn
+        self.weight_bitwidth_fn = weight_bitwidth_fn
         self.module_names = {} if module_names is None else dict(module_names)
         self.device = device
         self.dtype = torch.float32 if dtype is None else dtype
 
     @property
-    def source(self) -> str:
-        return "default" if self.bitwidth_fn is None else "bitwidth_fn"
+    def activation_source(self) -> str:
+        if self.activation_bitwidth_fn is None:
+            return "default"
+        return "activation_bitwidth_fn"
+
+    @property
+    def weight_source(self) -> str:
+        return "default" if self.weight_bitwidth_fn is None else "weight_bitwidth_fn"
 
     def bind(self, element: nn.Module) -> ModuleBitwidthRef | None:
         if not isinstance(element, nn.Module):
@@ -116,24 +128,9 @@ class ModuleBitwidthExtractor(ElementTensorExtractor[nn.Module]):
 
     @torch.no_grad()
     def resolve(self, name: str, module: nn.Module) -> tuple[int, int]:
-        if self.bitwidth_fn is None:
-            return DEFAULT_BITWIDTH, DEFAULT_BITWIDTH
-
-        try:
-            result = self.bitwidth_fn(name, module)
-        except Exception as error:
-            raise RuntimeError(f"bitwidth_fn failed for layer {name!r}.") from error
-
-        if not isinstance(result, (tuple, list)) or len(result) != 2:
-            raise TypeError(
-                f"bitwidth_fn must return (activation_bits, weight_bits) for layer "
-                f"{name!r}, got {result!r}."
-            )
-
-        activation_bits, weight_bits = result
         return (
-            _validated_bitwidth(activation_bits, name, "activation"),
-            _validated_bitwidth(weight_bits, name, "weight"),
+            _call_bitwidth_fn(self.activation_bitwidth_fn, "activation", name, module),
+            _call_bitwidth_fn(self.weight_bitwidth_fn, "weight", name, module),
         )
 
     def _device_for(self, module: nn.Module) -> torch.device:
@@ -172,6 +169,23 @@ class ModuleBitwidthExtractor(ElementTensorExtractor[nn.Module]):
 
             label = name if name else module.__class__.__name__
             yield label, module
+
+
+def _check_callable(fn, label: str) -> None:
+    if fn is not None and not callable(fn):
+        raise TypeError(f"{label} must be callable or None.")
+
+
+def _call_bitwidth_fn(fn, side: str, name: str, module: nn.Module) -> int:
+    if fn is None:
+        return DEFAULT_BITWIDTH
+
+    try:
+        value = fn(name, module)
+    except Exception as error:
+        raise RuntimeError(f"{side}_bitwidth_fn failed for layer {name!r}.") from error
+
+    return _validated_bitwidth(value, name, side)
 
 
 def _validated_bitwidth(value, name: str, side: str) -> int:

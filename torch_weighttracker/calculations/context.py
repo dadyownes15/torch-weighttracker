@@ -23,7 +23,8 @@ class CalculationContext:
     weighted_module_index: Mapping[nn.Module, int]
     example_inputs: object | None = None
     weighted_module_names: tuple[str, ...] = ()
-    bitwidth_fn: Callable[[str, nn.Module], tuple] | None = None
+    activation_bitwidth_fn: Callable[[str, nn.Module], object] | None = None
+    weight_bitwidth_fn: Callable[[str, nn.Module], object] | None = None
 
 
 def calculation_dtype(ctx: CalculationContext) -> torch.dtype:

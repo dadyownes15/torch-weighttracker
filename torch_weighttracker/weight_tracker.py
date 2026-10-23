@@ -129,14 +129,21 @@ class WeightTracker:
         attention_specs: Iterable[SeparateQKVAttentionSpec] = (),
         canonical_group_filter: Callable[[CanonicalUnitGroup], bool] | None = None,
         reduction_backend: ReductionBackend | str = ReductionBackend.SPARSE,
-        bitwidth_fn: BitwidthFn | None = None,
+        activation_bitwidth_fn: BitwidthFn | None = None,
+        weight_bitwidth_fn: BitwidthFn | None = None,
     ) -> None:
         """
-        `bitwidth_fn(name, module) -> (activation_bits, weight_bits)` gives the
-        bitwidths the BOPs trackers use. It is called for every tracked layer
-        on every `track()` and `view_bitwidths()`, so bitwidth changes during
-        training are picked up. Values must be whole numbers >= 1. Without it
-        every layer is `(32, 32)`. See the README section "Exposing bit-widths".
+        The BOPs trackers multiply each layer's MACs by two bitwidths:
+
+        - `activation_bitwidth_fn(name, module) -> bits`: bitwidth of the
+          layer's input activations.
+        - `weight_bitwidth_fn(name, module) -> bits`: bitwidth of the layer's
+          weights.
+
+        Both are called for every tracked layer on every `track()` and
+        `view_bitwidths()`, so bitwidth changes during training are picked up.
+        Values must be whole numbers >= 1. A missing function means 32 bits.
+        See the README section "Exposing bit-widths".
         """
         self.model = model
         self.reduction_backend = ReductionBackend(reduction_backend)
@@ -157,9 +164,14 @@ class WeightTracker:
         if canonical_group_filter is not None and not callable(canonical_group_filter):
             raise TypeError("canonical_group_filter must be callable or None.")
         self.canonical_group_filter = canonical_group_filter
-        if bitwidth_fn is not None and not callable(bitwidth_fn):
-            raise TypeError("bitwidth_fn must be callable or None.")
-        self.bitwidth_fn = bitwidth_fn
+        for label, fn in (
+            ("activation_bitwidth_fn", activation_bitwidth_fn),
+            ("weight_bitwidth_fn", weight_bitwidth_fn),
+        ):
+            if fn is not None and not callable(fn):
+                raise TypeError(f"{label} must be callable or None.")
+        self.activation_bitwidth_fn = activation_bitwidth_fn
+        self.weight_bitwidth_fn = weight_bitwidth_fn
         self.dependency_graph = None
 
         self.ignored_params = [] if ignored_params is None else list(ignored_params)
@@ -766,14 +778,18 @@ class WeightTracker:
         ignore: Iterable[FilterItem] = (),
     ) -> BitwidthView:
         """
-        Current activation and weight bitwidth of every layer the BOPs trackers
-        count, with their source (`"bitwidth_fn"` or `"default"`).
+        Current input-activation and weight bitwidth of every layer the BOPs
+        trackers count, with the source of each (the function name or
+        `"default"`).
         """
         modules = filter_bops_weighted_modules(
             self._get_weighted_modules(),
             bops_consumer_filter(include=include, ignore=ignore),
         )
-        extractor = ModuleBitwidthExtractor(bitwidth_fn=self.bitwidth_fn)
+        extractor = ModuleBitwidthExtractor(
+            activation_bitwidth_fn=self.activation_bitwidth_fn,
+            weight_bitwidth_fn=self.weight_bitwidth_fn,
+        )
         layers = []
         for name, module in zip(
             self._module_names_for_modules(modules), modules, strict=True
@@ -784,7 +800,8 @@ class WeightTracker:
                     name=name,
                     activation_bits=activation_bits,
                     weight_bits=weight_bits,
-                    source=extractor.source,
+                    activation_source=extractor.activation_source,
+                    weight_source=extractor.weight_source,
                 )
             )
         return BitwidthView(layers=tuple(layers))
@@ -1098,7 +1115,8 @@ class WeightTracker:
             },
             example_inputs=self.example_inputs,
             weighted_module_names=self._module_names_for_modules(weighted_modules),
-            bitwidth_fn=self.bitwidth_fn,
+            activation_bitwidth_fn=self.activation_bitwidth_fn,
+            weight_bitwidth_fn=self.weight_bitwidth_fn,
         )
 
     def _validate_consumer_context(self, context: CalculationContext) -> None:

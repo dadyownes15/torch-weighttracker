@@ -160,7 +160,7 @@ def test_module_axis_and_bitrates_share_weighted_module_order() -> None:
         model,
         groups,
         example_inputs=torch.randn(1, 2),
-        bitwidth_fn=bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
+        **bitwidths_by_name({"fc1": (8, 2), "fc2": (4, 4)}),
     )
 
     calculations = tracker.ensure_calculations(
@@ -207,7 +207,7 @@ def test_structured_bops_supports_qkv_projection_head_dim_group() -> None:
         example_inputs=torch.randn(1, 4),
         num_heads={model.qkv: 2},
         prune_dim=True,
-        bitwidth_fn=bitwidths_by_name({"qkv": (1, 1), "proj": (1, 1)}),
+        **bitwidths_by_name({"qkv": (1, 1), "proj": (1, 1)}),
     )
 
     calculations = tracker.ensure_calculations(

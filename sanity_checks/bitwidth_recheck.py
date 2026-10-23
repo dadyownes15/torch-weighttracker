@@ -6,12 +6,12 @@ Usage:
 A tiny CNN is "trained" for a few steps with a `structured_bops` tracker. The
 model mimics a mixed-precision setup:
 
-    conv1  CoDeQ-style weight quantizer on `parametrizations.weight`
-    conv2  separate activation quantizer module in front of it
+    conv1  weight quantizer on `parametrizations.weight` (CoDeQ-style)
+    conv2  input activations quantized by a separate module in front of it
     fc     not quantized (32/32)
 
 Halfway through training the quantizers lower conv1's weights from 8 to 4 bits
-and conv2's activations from 8 to 6 bits. The script checks that the next
+and conv2's input activations from 8 to 6 bits. The script checks that the next
 `track()` reports BOPs scaled by exactly 4/8 and 6/8 for those layers, that fc
 is unchanged, and that the total is the sum. It exits non-zero on any mismatch.
 """
@@ -87,23 +87,23 @@ class TinyCNN(nn.Module):
         return self.fc(self.pool(x).flatten(1))
 
 
-def make_bitwidth_fn(model: TinyCNN):
-    """The README recipe: CoDeQ weight quantizers plus a mapped activation quantizer."""
-    activation_quantizers = {"conv2": model.act_quant}
+def weight_bitwidth_fn(name: str, module: nn.Module):
+    """Weight bits: read from the quantizer parametrization on `weight`."""
+    if parametrize.is_parametrized(module, "weight"):
+        for parametrization in module.parametrizations.weight:
+            return parametrization.quantizer.get_bitwidth()
+    return 32
 
-    def bitwidth_fn(name: str, module: nn.Module):
-        weight_bits = 32
-        if parametrize.is_parametrized(module, "weight"):
-            for parametrization in module.parametrizations.weight:
-                weight_bits = parametrization.quantizer.get_bitwidth()
 
-        activation_quantizer = activation_quantizers.get(name)
-        activation_bits = (
-            32 if activation_quantizer is None else activation_quantizer.bits
-        )
-        return activation_bits, weight_bits
+def make_activation_bitwidth_fn(model: TinyCNN):
+    """Input-activation bits: each layer maps to the quantizer that feeds it."""
+    input_quantizers = {"conv2": model.act_quant}
 
-    return bitwidth_fn
+    def activation_bitwidth_fn(name: str, module: nn.Module):
+        quantizer = input_quantizers.get(name)
+        return 32 if quantizer is None else quantizer.bits
+
+    return activation_bitwidth_fn
 
 
 def layer_bops(metrics: dict) -> dict[str, float]:
@@ -135,7 +135,12 @@ def main() -> None:
     torch.manual_seed(0)
     model = TinyCNN().to(device)
     example = torch.randn(1, 3, 16, 16, device=device)
-    owner = WeightTracker(model, example, bitwidth_fn=make_bitwidth_fn(model))
+    owner = WeightTracker(
+        model,
+        example,
+        activation_bitwidth_fn=make_activation_bitwidth_fn(model),
+        weight_bitwidth_fn=weight_bitwidth_fn,
+    )
     tracker = owner.create_tracker(
         TRACKER, log_total_bops=True, log_layerwise_stats=True
     )
@@ -200,12 +205,12 @@ def main() -> None:
         TRACKER, log_total_bops=True, log_layerwise_stats=True
     )
     timing = {
-        "track_ms_with_bitwidth_fn": mean_track_ms(tracker, args.iters, device),
-        "track_ms_without_bitwidth_fn": mean_track_ms(plain, args.iters, device),
+        "track_ms_with_bitwidth_fns": mean_track_ms(tracker, args.iters, device),
+        "track_ms_without_bitwidth_fns": mean_track_ms(plain, args.iters, device),
     }
     print(
-        f"\ntrack(): {timing['track_ms_with_bitwidth_fn']:.3f} ms with bitwidth_fn, "
-        f"{timing['track_ms_without_bitwidth_fn']:.3f} ms without "
+        f"\ntrack(): {timing['track_ms_with_bitwidth_fns']:.3f} ms with bitwidth fns, "
+        f"{timing['track_ms_without_bitwidth_fns']:.3f} ms without "
         f"({args.iters} calls, {device})"
     )
 

@@ -61,7 +61,8 @@ class ModuleBitwidthRule:
 def create_bitrate_pr_module_calc(
     modules: Iterable[nn.Module],
     *,
-    bitwidth_fn: BitwidthFn | None = None,
+    activation_bitwidth_fn: BitwidthFn | None = None,
+    weight_bitwidth_fn: BitwidthFn | None = None,
     module_names: Iterable[str] = (),
     device: torch.device | str | None = None,
     dtype: torch.dtype | None = None,
@@ -69,8 +70,10 @@ def create_bitrate_pr_module_calc(
     """
     Returns the current activation and weight bitwidth for each weighted module.
 
-    Bitwidths come from `bitwidth_fn(name, module)` and are re-read on every
-    call; without it every module is `(32, 32)`.
+    Activation bits (of the module's input activations) come from
+    `activation_bitwidth_fn(name, module)` and weight bits from
+    `weight_bitwidth_fn(name, module)`. Both are re-read on every call; a
+    missing function means 32 bits.
 
     Output: 1D tensor with length `2 * len(weighted_modules)`, ordered as
     `(activation_bits, weight_bits)` for each module.
@@ -79,7 +82,8 @@ def create_bitrate_pr_module_calc(
     modules = tuple(modules)
     module_names = tuple(module_names)
     extractor = ModuleBitwidthExtractor(
-        bitwidth_fn=bitwidth_fn,
+        activation_bitwidth_fn=activation_bitwidth_fn,
+        weight_bitwidth_fn=weight_bitwidth_fn,
         module_names=(
             dict(zip(modules, module_names, strict=True)) if module_names else None
         ),
@@ -105,7 +109,8 @@ CALCULATION_SPEC = CalculationSpec(
     requires_groups=False,
     create=lambda ctx, deps: create_bitrate_pr_module_calc(
         ctx.weighted_modules,
-        bitwidth_fn=ctx.bitwidth_fn,
+        activation_bitwidth_fn=ctx.activation_bitwidth_fn,
+        weight_bitwidth_fn=ctx.weight_bitwidth_fn,
         module_names=ctx.weighted_module_names,
         device=calculation_device(ctx),
         dtype=calculation_dtype(ctx),

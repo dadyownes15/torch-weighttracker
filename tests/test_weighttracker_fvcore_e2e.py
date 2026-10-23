@@ -474,7 +474,7 @@ def test_structured_bops_matches_fvcore_weighted_macs_for_dense_resnet() -> None
     tracker = WeightTracker(
         model,
         example_inputs,
-        bitwidth_fn=bitwidths_by_name({"stem_conv": (8, 4), "block1.conv1": (6, 6)}),
+        **bitwidths_by_name({"stem_conv": (8, 4), "block1.conv1": (6, 6)}),
     )
 
     structured_bops = tracker.create_tracker(
@@ -520,7 +520,7 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_resnet20() -> None:
         model,
         example_inputs=example_inputs,
         root_module_types=[nn.Conv2d, nn.Linear],
-        bitwidth_fn=bitwidths_by_name(
+        **bitwidths_by_name(
             {
                 "stem": (8, 4),
                 "layer2.0.conv1": (6, 6),
@@ -601,7 +601,7 @@ def test_unstructured_bops_matches_fvcore_weighted_macs_for_transformer() -> Non
             block.attn: block.attn.num_heads
             for block in model.blocks
         },
-        bitwidth_fn=bitwidths_by_name(
+        **bitwidths_by_name(
             {
                 "blocks.0.attn": (8, 4),
                 "blocks.0.mlp_in": (6, 6),

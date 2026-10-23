@@ -18,7 +18,7 @@ class TwoLayer(nn.Module):
 
 
 class FakeQuantizer(nn.Module):
-    """Mimics a CoDeQ quantizer: get_bitwidth() returns a fresh CPU tensor."""
+    """Weight quantizer whose get_bitwidth() returns a fresh CPU tensor."""
 
     def __init__(self, bits):
         super().__init__()
@@ -46,15 +46,11 @@ def attach_quantizer(module: nn.Module, bits) -> FakeQuantizer:
     return parametrization.quantizer
 
 
-def codeq_style_bitwidth_fn(activation_bits: dict[str, int]):
-    def bitwidth_fn(name, module):
-        weight_bits = 32
-        if parametrize.is_parametrized(module, "weight"):
-            for parametrization in module.parametrizations.weight:
-                weight_bits = parametrization.quantizer.get_bitwidth()
-        return activation_bits.get(name, 32), weight_bits
-
-    return bitwidth_fn
+def quantizer_weight_bits(name, module):
+    if parametrize.is_parametrized(module, "weight"):
+        for parametrization in module.parametrizations.weight:
+            return parametrization.quantizer.get_bitwidth()
+    return 32
 
 
 def _module_bops(tracker, tracker_type: str) -> dict[str, float]:
@@ -70,6 +66,18 @@ def _create_bops_tracker(tracker: WeightTracker, tracker_type: str):
     )
 
 
+def _view(owner: WeightTracker) -> dict[str, tuple]:
+    return {
+        layer.name: (
+            layer.activation_bits,
+            layer.weight_bits,
+            layer.activation_source,
+            layer.weight_source,
+        )
+        for layer in owner.view_bitwidths().layers
+    }
+
+
 @pytest.mark.parametrize("backend", ["sparse", "loop"])
 @pytest.mark.parametrize("tracker_type", ["structured_bops", "unstructured_bops"])
 def test_bops_follow_bitwidth_changes_between_track_calls(
@@ -78,19 +86,20 @@ def test_bops_follow_bitwidth_changes_between_track_calls(
     torch.manual_seed(0)
     model = TwoLayer()
     quantizer = attach_quantizer(model.fc1, 8)
-    activation_bits = {"fc2": 8}
+    input_bits = {"fc2": 8}
     owner = WeightTracker(
         model,
         torch.randn(1, 4),
         reduction_backend=backend,
-        bitwidth_fn=codeq_style_bitwidth_fn(activation_bits),
+        activation_bitwidth_fn=lambda name, module: input_bits.get(name, 32),
+        weight_bitwidth_fn=quantizer_weight_bits,
     )
     bops = _create_bops_tracker(owner, tracker_type)
     before = _module_bops(bops, tracker_type)
 
     with torch.no_grad():
         quantizer.bits.fill_(4)
-    activation_bits["fc2"] = 6
+    input_bits["fc2"] = 6
     metrics = bops.track()[tracker_type]
     after = {name: values["bops"] for name, values in metrics["modules"].items()}
 
@@ -104,9 +113,7 @@ def test_untouched_layers_keep_their_bops() -> None:
     fc1 = attach_quantizer(model.fc1, 8)
     attach_quantizer(model.fc2, 8)
     owner = WeightTracker(
-        model,
-        torch.randn(1, 4),
-        bitwidth_fn=codeq_style_bitwidth_fn({}),
+        model, torch.randn(1, 4), weight_bitwidth_fn=quantizer_weight_bits
     )
     bops = _create_bops_tracker(owner, "structured_bops")
     before = _module_bops(bops, "structured_bops")
@@ -122,9 +129,7 @@ def test_untouched_layers_keep_their_bops() -> None:
 def test_quantizer_attached_after_create_tracker_is_picked_up() -> None:
     model = TwoLayer()
     owner = WeightTracker(
-        model,
-        torch.randn(1, 4),
-        bitwidth_fn=codeq_style_bitwidth_fn({}),
+        model, torch.randn(1, 4), weight_bitwidth_fn=quantizer_weight_bits
     )
     bops = _create_bops_tracker(owner, "structured_bops")
     before = _module_bops(bops, "structured_bops")
@@ -135,7 +140,7 @@ def test_quantizer_attached_after_create_tracker_is_picked_up() -> None:
     assert after["fc1"] == pytest.approx(before["fc1"] * 4 / 32)
 
 
-def test_without_bitwidth_fn_every_layer_is_full_precision() -> None:
+def test_without_bitwidth_fns_every_layer_is_full_precision() -> None:
     model = TwoLayer()
     model.fc1.weight_bitrate = 4
     model.fc1.activation_bitrate = 4
@@ -146,30 +151,68 @@ def test_without_bitwidth_fn_every_layer_is_full_precision() -> None:
     assert metrics["structured_bops"]["bops"] == pytest.approx(
         metrics["structured_bops"]["baseline"]
     )
-    assert {
-        layer.name: (layer.activation_bits, layer.weight_bits, layer.source)
-        for layer in owner.view_bitwidths().layers
-    } == {
-        "fc1": (32, 32, "default"),
-        "fc2": (32, 32, "default"),
+    assert _view(owner) == {
+        "fc1": (32, 32, "default", "default"),
+        "fc2": (32, 32, "default", "default"),
     }
 
 
-def test_bitwidth_fn_receives_bops_module_names() -> None:
+def test_each_side_defaults_independently() -> None:
     model = TwoLayer()
-    seen = []
+    attach_quantizer(model.fc1, 4)
+    weight_only = WeightTracker(
+        model, torch.randn(1, 4), weight_bitwidth_fn=quantizer_weight_bits
+    )
+    activation_only = WeightTracker(
+        model,
+        torch.randn(1, 4),
+        activation_bitwidth_fn=lambda name, module: 8,
+    )
 
-    def bitwidth_fn(name, module):
-        seen.append((name, module))
-        return 8, 8
+    assert _view(weight_only)["fc1"] == (32, 4, "default", "weight_bitwidth_fn")
+    assert _view(activation_only)["fc1"] == (
+        8,
+        32,
+        "activation_bitwidth_fn",
+        "default",
+    )
+    bops = _module_bops(
+        _create_bops_tracker(activation_only, "structured_bops"),
+        "structured_bops",
+    )
+    full = _module_bops(
+        _create_bops_tracker(
+            WeightTracker(model, torch.randn(1, 4)), "structured_bops"
+        ),
+        "structured_bops",
+    )
+    assert bops["fc1"] == pytest.approx(full["fc1"] * 8 / 32)
 
-    owner = WeightTracker(model, torch.randn(1, 4), bitwidth_fn=bitwidth_fn)
+
+def test_bitwidth_fns_receive_bops_module_names() -> None:
+    model = TwoLayer()
+    seen = {"activation": [], "weight": []}
+
+    def recorder(side):
+        def fn(name, module):
+            seen[side].append((name, module))
+            return 8
+
+        return fn
+
+    owner = WeightTracker(
+        model,
+        torch.randn(1, 4),
+        activation_bitwidth_fn=recorder("activation"),
+        weight_bitwidth_fn=recorder("weight"),
+    )
     metrics = _create_bops_tracker(owner, "structured_bops").track()
 
     names = set(metrics["structured_bops"]["modules"])
     assert names == {"fc1", "fc2"}
-    assert {name for name, _ in seen} == names
-    assert all(module is model.get_submodule(name) for name, module in seen)
+    for calls in seen.values():
+        assert {name for name, _ in calls} == names
+        assert all(module is model.get_submodule(name) for name, module in calls)
 
 
 def test_view_bitwidths_reflects_current_values() -> None:
@@ -178,22 +221,18 @@ def test_view_bitwidths_reflects_current_values() -> None:
     owner = WeightTracker(
         model,
         torch.randn(1, 4),
-        bitwidth_fn=codeq_style_bitwidth_fn({"fc2": 6}),
+        activation_bitwidth_fn=lambda name, module: {"fc2": 6}.get(name, 32),
+        weight_bitwidth_fn=quantizer_weight_bits,
     )
+    sources = ("activation_bitwidth_fn", "weight_bitwidth_fn")
 
-    def view():
-        return {
-            layer.name: (layer.activation_bits, layer.weight_bits, layer.source)
-            for layer in owner.view_bitwidths().layers
-        }
-
-    assert view() == {
-        "fc1": (32, 8, "bitwidth_fn"),
-        "fc2": (6, 32, "bitwidth_fn"),
+    assert _view(owner) == {
+        "fc1": (32, 8, *sources),
+        "fc2": (6, 32, *sources),
     }
     with torch.no_grad():
         quantizer.bits.fill_(3)
-    assert view()["fc1"] == (32, 3, "bitwidth_fn")
+    assert _view(owner)["fc1"] == (32, 3, *sources)
     assert isinstance(owner.view_bitwidths().layers[0].weight_bits, int)
 
 
@@ -202,30 +241,30 @@ def test_view_bitwidths_reflects_current_values() -> None:
     [5.3, 0, -4, True, torch.tensor(2.5), float("nan")],
     ids=["fractional", "zero", "negative", "bool", "fractional-tensor", "nan"],
 )
-def test_invalid_bitwidth_values_raise_with_layer_name(bad_bits) -> None:
+@pytest.mark.parametrize("side", ["activation", "weight"])
+def test_invalid_bitwidth_values_raise_with_layer_name(side, bad_bits) -> None:
     model = TwoLayer()
     bits = {"fc1": 8}
 
-    def bitwidth_fn(name, module):
-        return 32, bits.get(name, 32)
+    def fn(name, module):
+        return bits.get(name, 32)
 
-    owner = WeightTracker(model, torch.randn(1, 4), bitwidth_fn=bitwidth_fn)
+    owner = WeightTracker(model, torch.randn(1, 4), **{f"{side}_bitwidth_fn": fn})
     bops = _create_bops_tracker(owner, "structured_bops")
     bops.track()
 
     bits["fc1"] = bad_bits
-    with pytest.raises(ValueError, match=r"'fc1'.*weight"):
+    with pytest.raises(ValueError, match=rf"'fc1'.*{side}"):
         bops.track()
-    with pytest.raises(ValueError, match=r"'fc1'.*weight"):
+    with pytest.raises(ValueError, match=rf"'fc1'.*{side}"):
         owner.view_bitwidths()
 
 
 def test_invalid_bitwidth_at_creation_raises() -> None:
-    model = TwoLayer()
     owner = WeightTracker(
-        model,
+        TwoLayer(),
         torch.randn(1, 4),
-        bitwidth_fn=lambda name, module: (4.5, 8),
+        activation_bitwidth_fn=lambda name, module: 4.5,
     )
 
     with pytest.raises(ValueError, match=r"activation"):
@@ -234,27 +273,28 @@ def test_invalid_bitwidth_at_creation_raises() -> None:
 
 @pytest.mark.parametrize(
     "result",
-    [8, (8,), (8, 8, 8), "88", None],
-    ids=["int", "1-tuple", "3-tuple", "str", "none"],
+    [(8, 8), "8", None, torch.tensor([8.0, 8.0])],
+    ids=["tuple", "str", "none", "vector-tensor"],
 )
-def test_bitwidth_fn_must_return_a_pair(result) -> None:
+def test_bitwidth_fn_must_return_a_scalar(result) -> None:
     owner = WeightTracker(
         TwoLayer(),
         torch.randn(1, 4),
-        bitwidth_fn=lambda name, module: result,
+        weight_bitwidth_fn=lambda name, module: result,
     )
 
-    with pytest.raises(TypeError, match=r"'fc1'"):
+    with pytest.raises((TypeError, ValueError), match=r"'fc1'.*weight"):
         owner.view_bitwidths()
 
 
-def test_errors_inside_bitwidth_fn_name_the_layer() -> None:
-    def bitwidth_fn(name, module):
+@pytest.mark.parametrize("side", ["activation", "weight"])
+def test_errors_inside_bitwidth_fn_name_the_layer(side) -> None:
+    def fn(name, module):
         raise KeyError(name)
 
-    owner = WeightTracker(TwoLayer(), torch.randn(1, 4), bitwidth_fn=bitwidth_fn)
+    owner = WeightTracker(TwoLayer(), torch.randn(1, 4), **{f"{side}_bitwidth_fn": fn})
 
-    with pytest.raises(RuntimeError, match=r"'fc1'") as error:
+    with pytest.raises(RuntimeError, match=rf"{side}_bitwidth_fn.*'fc1'") as error:
         owner.view_bitwidths()
     assert isinstance(error.value.__cause__, KeyError)
 
@@ -263,7 +303,8 @@ def test_whole_number_float_and_tensor_bitwidths_are_accepted() -> None:
     owner = WeightTracker(
         TwoLayer(),
         torch.randn(1, 4),
-        bitwidth_fn=lambda name, module: (8.0, torch.tensor(4.0)),
+        activation_bitwidth_fn=lambda name, module: 8.0,
+        weight_bitwidth_fn=lambda name, module: torch.tensor(4.0),
     )
 
     layers = owner.view_bitwidths().layers
@@ -274,6 +315,7 @@ def test_whole_number_float_and_tensor_bitwidths_are_accepted() -> None:
     ]
 
 
-def test_bitwidth_fn_must_be_callable() -> None:
-    with pytest.raises(TypeError, match="bitwidth_fn"):
-        WeightTracker(TwoLayer(), torch.randn(1, 4), bitwidth_fn=8)
+@pytest.mark.parametrize("side", ["activation", "weight"])
+def test_bitwidth_fns_must_be_callable(side) -> None:
+    with pytest.raises(TypeError, match=f"{side}_bitwidth_fn"):
+        WeightTracker(TwoLayer(), torch.randn(1, 4), **{f"{side}_bitwidth_fn": 8})

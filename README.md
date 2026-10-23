@@ -537,66 +537,41 @@ for layer in tracker.view_bitwidths().layers:
 # fc 32 32 bitwidth_fn
 ```
 
-### Recipes
-
-CoDeQ weight quantizers are registered as parametrizations on `weight`:
+### Example
 
 ```python
-import torch.nn.utils.parametrize as parametrize
-
-
-def codeq_bitwidth_fn(name, module):
-    weight_bits = 32
-    if parametrize.is_parametrized(module, "weight"):
-        for parametrization in module.parametrizations.weight:
-            quantizer = getattr(parametrization, "quantizer", None)
-            if quantizer is not None:
-                weight_bits = quantizer.get_bitwidth()
-    return 32, weight_bits
-```
-
-Fixed per-layer values:
-
-```python
-bits = {"stem": (8, 8), "layer1.0.conv1": (8, 4)}
-
-tracker = WeightTracker(
-    model,
-    example_inputs,
-    bitwidth_fn=lambda name, module: bits.get(name, (32, 32)),
-)
-```
-
-Activation quantizers that live in separate modules, for example a quantizer
-applied in front of a convolution, are mapped to the layer whose input they
-quantize:
-
-```python
-activation_quantizers = {"conv2": model.act_quant}
+bits = {"conv1": (8, 4), "conv2": (8, 8)}
 
 
 def bitwidth_fn(name, module):
-    quantizer = activation_quantizers.get(name)
-    activation_bits = 32 if quantizer is None else quantizer.bits
-    _, weight_bits = codeq_bitwidth_fn(name, module)
-    return activation_bits, weight_bits
+    return bits.get(name, (32, 32))
+
+
+tracker = WeightTracker(model, example_inputs, bitwidth_fn=bitwidth_fn)
+bops = tracker.create_tracker("structured_bops")
+bops.track()
+
+bits["conv1"] = (8, 2)  # e.g. a quantizer lowered conv1 during training
+bops.track()  # uses the new bit-widths
 ```
+
+In practice `bitwidth_fn` reads the current values from your quantizers
+instead of a dict.
 
 ### Cost
 
-`bitwidth_fn` runs once per layer on every `track()`. Quantizers that return
-CPU tensors, such as CoDeQ's `get_bitwidth()`, cause one GPU-to-CPU sync per
-quantized layer per call, so call `track()` at logging frequency rather than on
-every optimizer step. `sanity_checks/bitwidth_recheck.py` changes bit-widths
-during a short training run, checks that BOPs follow, and reports the `track()`
-overhead.
+`bitwidth_fn` runs once per layer on every `track()`. If it reads bit-widths
+from GPU tensors, each read is a GPU-to-CPU sync, so call `track()` at logging
+frequency rather than on every optimizer step.
+`sanity_checks/bitwidth_recheck.py` changes bit-widths during a short training
+run, checks that BOPs follow, and reports the `track()` overhead.
 
 ### Migrating from 0.3
 
-Earlier versions read bit-widths once, when the tracker was created, from CoDeQ
-quantizers on `parametrizations.weight` and from the `activation_bitrate`,
-`act_bitrate`, `weight_bitrate`, and `bitrate` module attributes. These are no
-longer read. Pass a `bitwidth_fn` instead, for example:
+Earlier versions read bit-widths once, when the tracker was created, from
+quantizer parametrizations on `weight` exposing `get_bitwidth()` and from the
+`activation_bitrate`, `act_bitrate`, `weight_bitrate`, and `bitrate` module
+attributes. These are no longer read. Pass a `bitwidth_fn` instead, for example:
 
 ```python
 def bitwidth_fn(name, module):
